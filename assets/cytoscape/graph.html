@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>mDiscovery Graph</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0d1117; overflow: hidden; }
+  #cy { width: 100vw; height: 100vh; }
+  #tooltip {
+    position: fixed;
+    background: rgba(22,27,34,0.95);
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: #c9d1d9;
+    font: 12px/1.5 'Segoe UI', system-ui, sans-serif;
+    pointer-events: none;
+    display: none;
+    z-index: 9999;
+    max-width: 260px;
+  }
+  #tooltip .type { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: .05em; }
+</style>
+<script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
+<script src="qwebchannel.js"></script>
+</head>
+<body>
+<div id="cy"></div>
+<div id="tooltip"></div>
+<script>
+// AS-31: Semantic type colour palette (dark-theme)
+const TYPE_COLORS = {
+  Person:       { bg: '#1a4731', border: '#3fb950' },
+  Organization: { bg: '#2d1e5e', border: '#8b5cf6' },
+  Location:     { bg: '#0d2d45', border: '#58a6ff' },
+  Event:        { bg: '#4a1c1c', border: '#f85149' },
+  Document:     { bg: '#3d3000', border: '#e3b341' },
+  Vehicle:      { bg: '#1e2d3d', border: '#79c0ff' },
+  Phone:        { bg: '#1d3a2a', border: '#56d364' },
+  Email:        { bg: '#3a1d3a', border: '#d2a8ff' },
+  Account:      { bg: '#2a2a0d', border: '#f0e68c' },
+  Unknown:      { bg: '#1c1c1c', border: '#6e7681' },
+};
+
+function nodeColor(type) {
+  return (TYPE_COLORS[type] || TYPE_COLORS.Unknown).bg;
+}
+function nodeBorder(type) {
+  return (TYPE_COLORS[type] || TYPE_COLORS.Unknown).border;
+}
+
+const cy = cytoscape({
+  container: document.getElementById('cy'),
+  style: [
+    {
+      selector: 'node',
+      style: {
+        'background-color': ele => nodeColor(ele.data('type')),
+        'border-color': ele => nodeBorder(ele.data('type')),
+        'border-width': 2,
+        'label': 'data(label)',
+        'color': '#c9d1d9',
+        'font-size': 11,
+        'text-valign': 'center',
+        'text-halign': 'center',
+        'text-wrap': 'ellipsis',
+        'text-max-width': 80,
+        'width': 60,
+        'height': 60,
+        'shape': 'ellipse',
+      }
+    },
+    {
+      selector: 'node[type="Organization"]',
+      style: { shape: 'rectangle', width: 70, height: 40 }
+    },
+    {
+      selector: 'node[type="Document"]',
+      style: { shape: 'round-rectangle', width: 65, height: 42 }
+    },
+    {
+      selector: 'node:selected',
+      style: { 'border-width': 4, 'border-color': '#f0c040', 'z-index': 999 }
+    },
+    {
+      selector: 'edge',
+      style: {
+        'width': ele => Math.max(1, (ele.data('strength') || 1) * 2),
+        'line-color': '#30363d',
+        'target-arrow-color': '#58a6ff',
+        'curve-style': 'bezier',
+        'label': 'data(type)',
+        'font-size': 9,
+        'color': '#8b949e',
+        'text-rotation': 'autorotate',
+      }
+    },
+    {
+      selector: 'edge[direction="directed"]',
+      style: { 'target-arrow-shape': 'triangle' }
+    },
+    {
+      selector: 'edge[direction="undirected"]',
+      style: { 'target-arrow-shape': 'none' }
+    },
+    {
+      selector: 'edge[direction="bidirectional"]',
+      style: {
+        'target-arrow-shape': 'triangle',
+        'source-arrow-shape': 'triangle',
+        'source-arrow-color': '#58a6ff',
+      }
+    },
+    {
+      selector: 'edge:selected',
+      style: { 'line-color': '#f0c040', 'target-arrow-color': '#f0c040' }
+    },
+    {
+      selector: '.highlighted',
+      style: { 'border-color': '#ff9500', 'border-width': 4 }
+    },
+    {
+      selector: '.faded',
+      style: { 'opacity': 0.2 }
+    }
+  ],
+  elements: [],
+  layout: { name: 'cose', animate: false }
+});
+
+// Tooltip
+const tooltip = document.getElementById('tooltip');
+cy.on('mouseover', 'node', evt => {
+  const n = evt.target;
+  const d = n.data();
+  const pos = evt.renderedPosition;
+  const extra = Object.entries(d)
+    .filter(([k]) => !['id','label','type'].includes(k))
+    .map(([k,v]) => `<b>${k}:</b> ${v}`)
+    .join('<br>');
+  tooltip.innerHTML = `<div class="type">${d.type || 'Unknown'}</div>
+    <b>${d.label}</b>${extra ? '<br>' + extra : ''}`;
+  tooltip.style.display = 'block';
+  tooltip.style.left = (pos.x + 15) + 'px';
+  tooltip.style.top  = (pos.y - 10) + 'px';
+});
+cy.on('mouseout', 'node', () => { tooltip.style.display = 'none'; });
+
+// Python bridge via QWebChannel
+let pybridge = null;
+
+function initChannel() {
+  new QWebChannel(qt.webChannelTransport, channel => {
+    pybridge = channel.objects.pybridge;
+    // Signal Python that the view is ready
+    if (pybridge && pybridge.viewReady) pybridge.viewReady();
+  });
+}
+// Try to init channel; fall back gracefully if not in PyQt context
+try { initChannel(); } catch(e) { console.log('Running outside PyQt context'); }
+
+// Node click → notify Python
+cy.on('tap', 'node', evt => {
+  const id = evt.target.data('id');
+  if (pybridge) pybridge.nodeSelected(id);
+});
+
+cy.on('tap', evt => {
+  if (evt.target === cy && pybridge) pybridge.backgroundTapped();
+});
+
+// ── Public API called from Python ──────────────────────────────────────
+
+window.loadGraph = function(jsonStr) {
+  const data = (typeof jsonStr === 'string') ? JSON.parse(jsonStr) : jsonStr;
+  cy.elements().remove();
+  cy.add(data.nodes || []);
+  cy.add(data.edges || []);
+  window.applyLayout('cose');
+};
+
+window.applyLayout = function(name) {
+  const layouts = {
+    cose:        { name: 'cose',        animate: true, animationDuration: 400 },
+    hierarchical:{ name: 'breadthfirst', animate: true, directed: true },
+    circular:    { name: 'circle',       animate: true },
+    grid:        { name: 'grid',         animate: true },
+  };
+  const opts = layouts[name] || layouts.cose;
+  cy.layout(opts).run();
+};
+
+window.highlightPath = function(nodeIds) {
+  cy.elements().addClass('faded').removeClass('highlighted');
+  nodeIds.forEach(id => cy.$(`#${id}`).removeClass('faded').addClass('highlighted'));
+};
+
+window.clearHighlight = function() {
+  cy.elements().removeClass('faded').removeClass('highlighted');
+};
+
+window.searchAndLocate = function(query) {
+  const q = query.toLowerCase();
+  const matches = cy.nodes().filter(n => n.data('label').toLowerCase().includes(q));
+  if (matches.length) {
+    cy.fit(matches, 80);
+    matches.select();
+  }
+  return matches.length;
+};
+
+window.expandNeighbors = function(nodeId) {
+  const node = cy.$(`#${nodeId}`);
+  node.neighborhood().removeClass('faded');
+};
+</script>
+</body>
+</html>

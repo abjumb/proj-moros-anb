@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mdiscovery"
+version = "0.1.0"
+description = "Local-first intelligence analysis suite — IBM i2 Analyst's Notebook at a fraction of the cost"
+requires-python = ">=3.11"
+dependencies = [
+    "kuzu>=0.8.2",
+    "pandas>=2.2",
+    "openpyxl>=3.1",
+    "chardet>=5.2",
+    "PyQt6>=6.7",
+    "PyQt6-WebEngine>=6.7",
+]
+
+[project.scripts]
+mdiscovery = "mdiscovery.app:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-qt>=4.4",
+]
+bench = [
+    "psutil>=6.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mdiscovery"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
