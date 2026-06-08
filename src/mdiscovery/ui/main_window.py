@@ -70,6 +70,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self._graph_view)
 
         self._inspector = EntityInspector()
+        self._graph_view.backgroundTapped.connect(self._inspector.clear)
         dock = QDockWidget("Entity Inspector", self)
         dock.setWidget(self._inspector)
         dock.setMinimumWidth(220)

@@ -45,6 +45,7 @@ class GraphView(QWidget):
     """Cytoscape.js graph embedded in a PyQt6 WebEngine widget."""
 
     nodeSelected = pyqtSignal(str)
+    backgroundTapped = pyqtSignal()
 
     def __init__(self, repo: Optional[GraphRepository] = None, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -64,6 +65,7 @@ class GraphView(QWidget):
         self._web.page().setWebChannel(self._channel)
 
         self._bridge.nodeSelectedSignal.connect(self.nodeSelected)
+        self._bridge.backgroundTappedSignal.connect(self.backgroundTapped)
         self._bridge.viewReady.connect(self._on_view_ready)
         self._web.loadFinished.connect(self._on_load_finished)
 
