@@ -73,7 +73,8 @@ def bench_graph_json(repo: GraphRepository) -> float:
 
 def run(n_entities: int = 1000) -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
-        db = GraphDatabase(tmpdir)
+        # Kuzu owns the DB path; give it a fresh sub-path, not the temp dir itself.
+        db = GraphDatabase(Path(tmpdir) / "bench_db")
         repo = GraphRepository(db)
 
         print(f"\n{'─' * 60}")
