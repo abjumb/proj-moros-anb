@@ -63,7 +63,6 @@ class IngestionService:
         return self._frame_to_staged(df, [])
 
     def _frame_to_staged(self, df: pd.DataFrame, warnings: list[str]) -> StagedDataset:
-        df = df.where(pd.notna(df), None)
         df.columns = [str(c).strip() for c in df.columns]
 
         column_samples: dict[str, list[Any]] = {}
@@ -74,7 +73,15 @@ class IngestionService:
             column_samples[col] = non_null[: self.SAMPLE_ROWS]
             column_types[col] = self._infer_type(non_null)
 
-        rows = df.to_dict(orient="records")
+        # Normalise missing values to None. `df.where(pd.notna(df), None)` is
+        # unreliable under pandas 3.x (NaN leaks back into object columns), so
+        # sanitise the materialised rows directly.
+        raw_rows = df.to_dict(orient="records")
+        rows = [
+            {k: (None if (v is None or (isinstance(v, float) and pd.isna(v))) else v)
+             for k, v in row.items()}
+            for row in raw_rows
+        ]
         return StagedDataset(
             columns=list(df.columns),
             rows=rows,
@@ -106,8 +113,20 @@ class IngestionService:
 
     @staticmethod
     def _is_date(s: str) -> bool:
+        s = s.strip()
+        if not s:
+            return False
+        # A bare integer/float is numeric, not a date — guard against
+        # pandas interpreting "123" as a nanosecond timestamp.
         try:
-            pd.to_datetime(s, infer_datetime_format=True)
+            float(s.replace(",", ""))
+            return False
+        except ValueError:
+            pass
+        try:
+            # `infer_datetime_format` was removed in pandas 2.0; format is
+            # inferred automatically. errors="raise" so non-dates fall through.
+            pd.to_datetime(s, errors="raise")
             return True
-        except Exception:
+        except (ValueError, TypeError, OverflowError):
             return False

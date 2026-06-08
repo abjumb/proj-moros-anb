@@ -18,7 +18,8 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout
 
 from ..graph.repository import GraphRepository
 
-ASSETS_DIR = Path(__file__).parent.parent.parent.parent.parent / "assets" / "cytoscape"
+# graph_view.py lives at <root>/src/mdiscovery/viz/ — parents[3] is <root>.
+ASSETS_DIR = Path(__file__).resolve().parents[3] / "assets" / "cytoscape"
 
 
 class PythonBridge(QObject):

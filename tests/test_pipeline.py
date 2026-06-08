@@ -1,0 +1,109 @@
+"""AS-14 + AS-15: import preview (dry-run), commit, and idempotent re-import."""
+
+from pathlib import Path
+
+import pytest
+
+from mdiscovery.graph.models import SemanticType
+from mdiscovery.graph.repository import GraphRepository
+from mdiscovery.importer.ingestion import IngestionService
+from mdiscovery.importer.pipeline import (
+    ColumnMapping, ImportMapping, ImportPipeline,
+)
+
+
+def _simple_mapping() -> ImportMapping:
+    """name -> Person label; role/city/age -> entity attributes."""
+    m = ImportMapping()
+    m.column_mappings = [
+        ColumnMapping(column="name", role="entity_label", semantic_type=SemanticType.PERSON),
+        ColumnMapping(column="role", role="entity_attr"),
+        ColumnMapping(column="city", role="entity_attr"),
+        ColumnMapping(column="age", role="entity_attr"),
+    ]
+    return m
+
+
+def _link_mapping() -> ImportMapping:
+    m = ImportMapping()
+    m.column_mappings = [
+        ColumnMapping(column="source", role="link_source", semantic_type=SemanticType.PERSON),
+        ColumnMapping(column="target", role="link_target", semantic_type=SemanticType.PERSON),
+        ColumnMapping(column="relationship", role="link_type"),
+    ]
+    return m
+
+
+def test_preview_is_dry_run(repo: GraphRepository, people_csv: Path):
+    ds = IngestionService().load(people_csv)
+    pipeline = ImportPipeline(repo)
+    preview = pipeline.preview(ds, _simple_mapping())
+    assert preview.entity_count == 5
+    # AS-14: nothing is written until commit
+    assert repo.entities.count() == 0
+
+
+def test_commit_writes_entities_with_attrs(repo: GraphRepository, people_csv: Path):
+    ds = IngestionService().load(people_csv)
+    pipeline = ImportPipeline(repo)
+    pipeline.commit(ds, _simple_mapping())
+
+    assert repo.entities.count() == 5
+    persons = repo.entities.by_type(SemanticType.PERSON)
+    alice = next(e for e in persons if e.label == "Alice Carter")
+    assert alice.properties["city"] == "London"
+    assert alice.properties["role"] == "Analyst"
+
+
+def test_reimport_is_idempotent(repo: GraphRepository, people_csv: Path):
+    """AS-15: re-running an import must not cause a duplicate explosion."""
+    ds = IngestionService().load(people_csv)
+    pipeline = ImportPipeline(repo)
+    pipeline.commit(ds, _simple_mapping())
+    pipeline.commit(ds, _simple_mapping())
+    assert repo.entities.count() == 5  # not 10
+
+
+def test_reimport_flags_duplicates_in_preview(repo: GraphRepository, people_csv: Path):
+    ds = IngestionService().load(people_csv)
+    pipeline = ImportPipeline(repo)
+    pipeline.commit(ds, _simple_mapping())
+    preview = pipeline.preview(ds, _simple_mapping())
+    assert preview.duplicate_entity_count == 5
+    assert any("exist" in w for w in preview.warnings)
+
+
+def test_link_mode_builds_entities_and_links(repo: GraphRepository, contacts_csv: Path):
+    ds = IngestionService().load(contacts_csv)
+    pipeline = ImportPipeline(repo)
+    result = pipeline.commit(ds, _link_mapping())
+
+    assert result.link_count == 4
+    assert repo.links.count() == 4
+    # endpoints created as entities
+    assert repo.entities.count() >= 5
+    types = {l.link_type for l in repo.links.all()}
+    assert "handles" in types
+
+
+def test_link_mode_connects_correct_endpoints(repo: GraphRepository, contacts_csv: Path):
+    ds = IngestionService().load(contacts_csv)
+    pipeline = ImportPipeline(repo)
+    pipeline.commit(ds, _link_mapping())
+
+    alice = repo.entities.search("Alice Carter")[0]
+    bob = repo.entities.search("Bob Mensah")[0]
+    # Alice -> Bob (handles) means Bob is a neighbour of Alice
+    neighbour_ids = {e.id for e in repo.neighbors(alice.id)}
+    assert bob.id in neighbour_ids
+
+
+def test_empty_labels_skipped(repo: GraphRepository, tmp_path: Path):
+    p = tmp_path / "gappy.csv"
+    p.write_text("name\nAlice\n\nBob\n")
+    ds = IngestionService().load(p)
+    m = ImportMapping()
+    m.column_mappings = [ColumnMapping(column="name", role="entity_label",
+                                       semantic_type=SemanticType.PERSON)]
+    ImportPipeline(repo).commit(ds, m)
+    assert repo.entities.count() == 2  # blank row skipped
