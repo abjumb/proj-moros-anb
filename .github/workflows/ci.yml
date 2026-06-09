@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      # The test suite exercises only the data, analysis, and export layers,
+      # none of which import PyQt6. Install the package without its (heavy,
+      # display-dependent) Qt dependencies plus the runtime deps the tests need,
+      # so CI stays fast and headless.
+      - name: Install (headless — no Qt)
+        run: |
+          python -m pip install --upgrade pip
+          pip install "kuzu>=0.8.2" "pandas>=2.2" "openpyxl>=3.1" "chardet>=5.2" "pytest>=8.0"
+          pip install -e . --no-deps
+
+      - name: Run tests
+        run: pytest -q
