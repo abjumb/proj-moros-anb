@@ -7,16 +7,25 @@ from typing import Optional
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QDockWidget, QLabel, QMainWindow, QSplitter, QToolBar,
-    QVBoxLayout, QWidget, QStatusBar, QApplication,
+    QDockWidget, QFileDialog, QLabel, QMainWindow, QMessageBox, QSplitter,
+    QToolBar, QVBoxLayout, QWidget, QStatusBar, QApplication,
 )
 from PyQt6.QtGui import QAction
 
 from ..graph.database import GraphDatabase
 from ..graph.models import Entity
 from ..graph.repository import GraphRepository
+from ..export.exporters import ExportFormat, write_export
 from ..viz.graph_view import GraphView
 from .import_dialog import ImportDialog
+
+# QFileDialog name-filter label -> export format.
+_EXPORT_FILTERS: dict[str, ExportFormat] = {
+    "GraphML (*.graphml)": ExportFormat.GRAPHML,
+    "CSV node/edge pair (*.csv)": ExportFormat.CSV,
+    "Node-link JSON (*.json)": ExportFormat.JSON,
+    "Markdown report (*.md)": ExportFormat.REPORT,
+}
 
 DEFAULT_DB_PATH = Path.home() / ".mdiscovery" / "default_case.kuzu"
 
@@ -84,6 +93,10 @@ class MainWindow(QMainWindow):
         import_action.triggered.connect(self._open_import)
         tb.addAction(import_action)
 
+        export_action = QAction("Export…", self)
+        export_action.triggered.connect(self._open_export)
+        tb.addAction(export_action)
+
         tb.addSeparator()
 
         for name, label in [
@@ -122,6 +135,26 @@ class MainWindow(QMainWindow):
         dlg = ImportDialog(self._repo, self)
         if dlg.exec():
             self._refresh_graph()
+
+    def _open_export(self) -> None:
+        if self._repo.entities.count() == 0:
+            QMessageBox.information(
+                self, "Nothing to export", "The graph is empty — import data first."
+            )
+            return
+        path_str, selected_filter = QFileDialog.getSaveFileName(
+            self, "Export graph", "case", ";;".join(_EXPORT_FILTERS),
+        )
+        if not path_str:
+            return
+        fmt = _EXPORT_FILTERS.get(selected_filter, ExportFormat.GRAPHML)
+        try:
+            written = write_export(self._repo, path_str, fmt)
+        except Exception as exc:  # surface failures instead of crashing the UI
+            QMessageBox.critical(self, "Export failed", str(exc))
+            return
+        names = "\n".join(p.name for p in written)
+        self._status.showMessage(f"Exported {fmt.value} → {names}", 5000)
 
     def _refresh_graph(self) -> None:
         self._graph_view.load_from_repo()
