@@ -22,7 +22,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-from ..graph.models import Entity, Link
+from ..graph.models import Entity, Link, LinkDirection
 from ..analysis.metrics import graph_summary
 
 
@@ -88,10 +88,13 @@ def to_graphml(entities: list[Entity], links: list[Link]) -> str:
                 _add_data(node, f"np__{name}", e.properties[name])
 
     for l in links:
-        edge = ET.SubElement(
-            graph, "edge",
-            {"id": l.id, "source": l.source_id, "target": l.target_id},
-        )
+        edge_attrs = {"id": l.id, "source": l.source_id, "target": l.target_id}
+        # GraphML consumers (Gephi/yEd/i2) read the structural `directed`
+        # attribute, not our custom `direction` data field. Override the graph's
+        # directed default for undirected links so their semantics survive export.
+        if l.direction is LinkDirection.UNDIRECTED:
+            edge_attrs["directed"] = "false"
+        edge = ET.SubElement(graph, "edge", edge_attrs)
         _add_data(edge, "link_type", l.link_type)
         _add_data(edge, "direction", l.direction.value)
         _add_data(edge, "strength", l.strength)

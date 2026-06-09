@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pytest
 
-from mdiscovery.graph.models import Entity, Link, SemanticType
+from mdiscovery.graph.models import Entity, Link, SemanticType, LinkDirection
 from mdiscovery.graph.repository import GraphRepository
 from mdiscovery.export.exporters import (
     ExportFormat,
@@ -51,6 +51,23 @@ def test_graphml_escapes_special_characters():
     ns = "{http://graphml.graphdrawing.org/xmlns}"
     label = root.find(f".//{ns}node/{ns}data[@key='label']")
     assert label.text == "A & <B>"
+
+
+def test_graphml_marks_undirected_edges():
+    entities = [Entity(label="A", id="a"), Entity(label="B", id="b"),
+                Entity(label="C", id="c")]
+    links = [
+        Link(source_id="a", target_id="b", id="ud",
+             direction=LinkDirection.UNDIRECTED),
+        Link(source_id="b", target_id="c", id="d",
+             direction=LinkDirection.DIRECTED),
+    ]
+    root = ET.fromstring(to_graphml(entities, links))
+    ns = "{http://graphml.graphdrawing.org/xmlns}"
+    edges = {e.get("id"): e for e in root.iter(f"{ns}edge")}
+    assert edges["ud"].get("directed") == "false"
+    # directed links inherit the graph default and carry no override
+    assert edges["d"].get("directed") is None
 
 
 def test_csv_pair_headers_and_rows():

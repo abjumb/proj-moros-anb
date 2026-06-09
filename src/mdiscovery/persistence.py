@@ -25,6 +25,10 @@ def copy_case(src: str | Path, dst: str | Path, *, overwrite: bool = False) -> P
     dst = Path(dst)
     if not src.exists():
         raise FileNotFoundError(f"No case at {src}")
+    if src.resolve() == dst.resolve():
+        # Source and destination are the same case — nothing to copy. Returning
+        # early avoids _remove() deleting the source out from under the copy.
+        return dst
     if dst.exists():
         if not overwrite:
             raise FileExistsError(f"{dst} already exists")

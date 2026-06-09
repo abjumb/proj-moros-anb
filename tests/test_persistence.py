@@ -38,6 +38,15 @@ def test_copy_case_existing_dest_raises_unless_overwrite(tmp_path):
     assert dst.read_text() == "new"
 
 
+def test_copy_case_same_path_is_noop_and_preserves_source(tmp_path):
+    # Save Case As onto the currently-open case must not delete it.
+    src = tmp_path / "case"
+    src.write_text("important")
+    result = copy_case(src, tmp_path / "case", overwrite=True)
+    assert result == tmp_path / "case"
+    assert src.read_text() == "important"
+
+
 def test_copy_case_copies_directory(tmp_path):
     src = tmp_path / "casedir"
     src.mkdir()
