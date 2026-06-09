@@ -5,10 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QDockWidget, QFileDialog, QLabel, QMainWindow, QMessageBox, QSplitter,
-    QToolBar, QVBoxLayout, QWidget, QStatusBar, QApplication,
+    QDockWidget, QFileDialog, QLabel, QLineEdit, QMainWindow, QMessageBox,
+    QPushButton, QSizePolicy, QSplitter, QToolBar, QVBoxLayout, QWidget,
+    QStatusBar, QApplication,
 )
 from PyQt6.QtGui import QAction
 
@@ -19,6 +20,7 @@ from ..export.exporters import ExportFormat, write_export
 from ..persistence import copy_case, RecentCases
 from ..viz.graph_view import GraphView
 from .import_dialog import ImportDialog
+from .find_path_dialog import FindPathDialog
 
 # QFileDialog name-filter label -> export format.
 _EXPORT_FILTERS: dict[str, ExportFormat] = {
@@ -36,18 +38,27 @@ RECENT_STORE = MDISCOVERY_DIR / "recent.json"
 
 
 class EntityInspector(QWidget):
-    """Side panel showing selected entity details."""
+    """Side panel showing selected entity details, with an expand-neighbors action."""
+
+    expandRequested = pyqtSignal(str)
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
+        self._entity_id: Optional[str] = None
         layout = QVBoxLayout(self)
         self._title = QLabel("Select a node to inspect")
         self._title.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._title.setWordWrap(True)
         layout.addWidget(self._title)
+
+        self._expand_btn = QPushButton("Expand neighbors")
+        self._expand_btn.setVisible(False)
+        self._expand_btn.clicked.connect(self._on_expand)
+        layout.addWidget(self._expand_btn)
         layout.addStretch()
 
     def show_entity(self, entity: Entity) -> None:
+        self._entity_id = entity.id
         lines = [
             f"<b>{entity.label}</b>",
             f"<small>Type: {entity.semantic_type.value}</small>",
@@ -55,9 +66,16 @@ class EntityInspector(QWidget):
         for k, v in entity.properties.items():
             lines.append(f"<b>{k}:</b> {v}")
         self._title.setText("<br>".join(lines))
+        self._expand_btn.setVisible(True)
 
     def clear(self) -> None:
+        self._entity_id = None
         self._title.setText("Select a node to inspect")
+        self._expand_btn.setVisible(False)
+
+    def _on_expand(self) -> None:
+        if self._entity_id:
+            self.expandRequested.emit(self._entity_id)
 
 
 class MainWindow(QMainWindow):
@@ -90,6 +108,7 @@ class MainWindow(QMainWindow):
 
         self._inspector = EntityInspector()
         self._graph_view.backgroundTapped.connect(self._inspector.clear)
+        self._inspector.expandRequested.connect(self._graph_view.expand_neighbors)
         dock = QDockWidget("Entity Inspector", self)
         dock.setWidget(self._inspector)
         dock.setMinimumWidth(220)
@@ -222,9 +241,27 @@ class MainWindow(QMainWindow):
 
         tb.addSeparator()
 
+        find_path_act = QAction("Find Path", self)
+        find_path_act.triggered.connect(self._open_find_path)
+        tb.addAction(find_path_act)
+
+        clear_hl_act = QAction("Clear Highlight", self)
+        clear_hl_act.triggered.connect(self._graph_view.clear_highlight)
+        tb.addAction(clear_hl_act)
+
         refresh_act = QAction("Refresh", self)
         refresh_act.triggered.connect(self._refresh_graph)
         tb.addAction(refresh_act)
+
+        # Right-aligned search box.
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        tb.addWidget(spacer)
+        self._search_edit = QLineEdit()
+        self._search_edit.setPlaceholderText("Search nodes…")
+        self._search_edit.setMaximumWidth(220)
+        self._search_edit.returnPressed.connect(self._do_search)
+        tb.addWidget(self._search_edit)
 
     def _build_statusbar(self) -> None:
         self._status = QStatusBar()
@@ -266,6 +303,22 @@ class MainWindow(QMainWindow):
             return
         names = "\n".join(p.name for p in written)
         self._status.showMessage(f"Exported {fmt.value} → {names}", 5000)
+
+    def _open_find_path(self) -> None:
+        if self._repo.entities.count() < 2:
+            QMessageBox.information(
+                self, "Find path", "Need at least two entities to find a path."
+            )
+            return
+        dlg = FindPathDialog(self._repo, self)
+        if dlg.exec() and dlg.path:
+            self._graph_view.highlight_path(dlg.path)
+            self._status.showMessage(f"Path found: {len(dlg.path)} nodes", 5000)
+
+    def _do_search(self) -> None:
+        query = self._search_edit.text().strip()
+        if query:
+            self._graph_view.search_and_locate(query)
 
     def _refresh_graph(self) -> None:
         self._graph_view.load_from_repo()
