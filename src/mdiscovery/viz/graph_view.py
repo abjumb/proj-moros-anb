@@ -27,6 +27,7 @@ class PythonBridge(QObject):
 
     nodeSelectedSignal = pyqtSignal(str)
     backgroundTappedSignal = pyqtSignal()
+    viewReadySignal = pyqtSignal()
 
     @pyqtSlot(str)
     def nodeSelected(self, node_id: str) -> None:
@@ -38,7 +39,7 @@ class PythonBridge(QObject):
 
     @pyqtSlot()
     def viewReady(self) -> None:
-        pass
+        self.viewReadySignal.emit()
 
 
 class GraphView(QWidget):
@@ -66,7 +67,7 @@ class GraphView(QWidget):
 
         self._bridge.nodeSelectedSignal.connect(self.nodeSelected)
         self._bridge.backgroundTappedSignal.connect(self.backgroundTapped)
-        self._bridge.viewReady.connect(self._on_view_ready)
+        self._bridge.viewReadySignal.connect(self._on_view_ready)
         self._web.loadFinished.connect(self._on_load_finished)
 
         self._load_html()
