@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
+import json
 from typing import Optional
 import kuzu
 
 from .database import GraphDatabase
 from .models import Entity, Link, SemanticType, LinkDirection
 
-_ENTITY_RETURN = "e.id, e.label, e.semantic_type, e.properties_json"
+_ENTITY_RETURN = "e.id, e.label, e.semantic_type, e.properties_json, e.icon, e.style_json"
 
 
 def _entity_from_row(row) -> Entity:
     return Entity.from_dict({
         "id": row[0], "label": row[1],
         "semantic_type": row[2], "properties": row[3],
+        "icon": row[4], "style": row[5],
     })
 
 
@@ -58,15 +60,20 @@ class EntityRepository:
             return
         rows = [
             {"id": e.id, "label": e.label,
-             "stype": e.semantic_type.value, "props": e.properties_json()}
+             "stype": e.semantic_type.value, "props": e.properties_json(),
+             "icon": e.icon, "style": e.style_json()}
             for e in entities
         ]
         self._c.execute(
             """
             UNWIND $rows AS r
             MERGE (e:Entity {id: r.id})
-            ON CREATE SET e.label = r.label, e.semantic_type = r.stype, e.properties_json = r.props
-            ON MATCH  SET e.label = r.label, e.semantic_type = r.stype, e.properties_json = r.props
+            ON CREATE SET e.label = r.label, e.semantic_type = r.stype,
+                          e.properties_json = r.props, e.icon = r.icon,
+                          e.style_json = r.style
+            ON MATCH  SET e.label = r.label, e.semantic_type = r.stype,
+                          e.properties_json = r.props, e.icon = r.icon,
+                          e.style_json = r.style
             """,
             {"rows": rows},
         )
@@ -181,6 +188,51 @@ class LinkRepository:
         r = self._c.execute("MATCH ()-[l:Link]->() RETURN count(l)")
         return r.get_next()[0] if r.has_next() else 0
 
+    def update_fields(
+        self,
+        link_id: str,
+        *,
+        link_type: Optional[str] = None,
+        direction: Optional[LinkDirection] = None,
+        strength: Optional[float] = None,
+        confidence: Optional[float] = None,
+        properties: Optional[dict] = None,
+    ) -> None:
+        """Update the provided fields of an existing link (rename, re-grade…).
+
+        Only keyword arguments that are not None are written; the rest of the
+        link is untouched. No-op if the id doesn't exist.
+        """
+        sets, params = [], {"id": link_id}
+        if link_type is not None:
+            sets.append("l.link_type = $lt"); params["lt"] = link_type
+        if direction is not None:
+            sets.append("l.direction = $dir"); params["dir"] = direction.value
+        if strength is not None:
+            sets.append("l.strength = $str"); params["str"] = float(strength)
+        if confidence is not None:
+            sets.append("l.confidence = $conf"); params["conf"] = float(confidence)
+        if properties is not None:
+            sets.append("l.properties_json = $props")
+            params["props"] = json.dumps(properties)
+        if not sets:
+            return
+        self._c.execute(
+            f"MATCH ()-[l:Link {{id: $id}}]->() SET {', '.join(sets)}",
+            params,
+        )
+
+    def get(self, link_id: str) -> Optional[Link]:
+        r = self._c.execute(
+            """
+            MATCH (src:Entity)-[l:Link {id: $id}]->(tgt:Entity)
+            RETURN l.id, src.id, tgt.id, l.link_type, l.direction,
+                   l.strength, l.confidence, l.properties_json
+            """,
+            {"id": link_id},
+        )
+        return _link_from_row(r.get_next()) if r.has_next() else None
+
     def delete(self, link_id: str) -> None:
         self._c.execute(
             "MATCH ()-[l:Link {id: $id}]->() DELETE l",
@@ -212,7 +264,8 @@ class GraphRepository:
         r = self._db.connection.execute(
             """
             MATCH (e:Entity {id: $id})-[:Link]-(n:Entity)
-            RETURN DISTINCT n.id, n.label, n.semantic_type, n.properties_json
+            RETURN DISTINCT n.id, n.label, n.semantic_type, n.properties_json,
+                            n.icon, n.style_json
             """,
             {"id": entity_id},
         )

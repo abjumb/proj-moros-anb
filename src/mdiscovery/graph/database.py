@@ -29,9 +29,17 @@ class GraphDatabase:
                 id STRING PRIMARY KEY,
                 label STRING,
                 semantic_type STRING,
-                properties_json STRING
+                properties_json STRING,
+                icon STRING DEFAULT '',
+                style_json STRING DEFAULT '{{}}'
             )
         """)
+        # Migrate pre-icon case files in place; DEFAULT backfills existing rows.
+        for column, default in (("icon", "''"), ("style_json", "'{}'")):
+            self._conn.execute(
+                f"ALTER TABLE {self.ENTITY_TABLE} "
+                f"ADD IF NOT EXISTS {column} STRING DEFAULT {default}"
+            )
         self._conn.execute(f"""
             CREATE REL TABLE IF NOT EXISTS {self.LINK_TABLE} (
                 FROM {self.ENTITY_TABLE} TO {self.ENTITY_TABLE},

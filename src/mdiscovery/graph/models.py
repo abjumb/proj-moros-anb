@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any
 import json
 import uuid
@@ -32,6 +33,11 @@ class Entity:
     semantic_type: SemanticType = SemanticType.UNKNOWN
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     properties: dict[str, Any] = field(default_factory=dict)
+    # Icon name from the assets/icons library ("" = derive from semantic type).
+    icon: str = ""
+    # Per-entity display attributes managed by the dossier UI:
+    # "size" (node px), "font_size" (label px), "photo" (absolute image path).
+    style: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -39,32 +45,50 @@ class Entity:
             "label": self.label,
             "semantic_type": self.semantic_type.value,
             "properties": self.properties,
+            "icon": self.icon,
+            "style": self.style,
         }
 
     def properties_json(self) -> str:
         return json.dumps(self.properties)
+
+    def style_json(self) -> str:
+        return json.dumps(self.style)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Entity":
         props = data.get("properties", {})
         if isinstance(props, str):
             props = json.loads(props)
+        style = data.get("style", {})
+        if isinstance(style, str):
+            style = json.loads(style) if style else {}
         return cls(
             id=data["id"],
             label=data["label"],
             semantic_type=SemanticType(data.get("semantic_type", "Unknown")),
             properties=props,
+            icon=data.get("icon", "") or "",
+            style=style or {},
         )
 
     def to_cytoscape(self) -> dict:
-        return {
-            "data": {
-                "id": self.id,
-                "label": self.label,
-                "type": self.semantic_type.value,
-                **{k: str(v) for k, v in self.properties.items()},
-            }
+        data = {
+            "id": self.id,
+            "label": self.label,
+            "type": self.semantic_type.value,
+            **{k: str(v) for k, v in self.properties.items()},
         }
+        if self.icon:
+            data["icon"] = self.icon
+        photo = self.style.get("photo")
+        if photo and Path(photo).is_absolute():
+            data["photo"] = Path(photo).as_uri()
+        if self.style.get("size"):
+            data["_size"] = self.style["size"]
+        if self.style.get("font_size"):
+            data["_fontSize"] = self.style["font_size"]
+        return {"data": data}
 
 
 @dataclass
