@@ -13,8 +13,9 @@ from typing import Callable, Optional
 
 from PyQt6.QtCore import QObject, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtWebChannel import QWebChannel
+from PyQt6.QtWebEngineCore import QWebEnginePage
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtWidgets import QWidget, QVBoxLayout
+from PyQt6.QtWidgets import QMessageBox, QWidget, QVBoxLayout
 
 from ..graph.repository import GraphRepository
 from ..icons import DEFAULT_TYPE_ICONS, colored_svg, load_icon_svgs
@@ -22,6 +23,11 @@ from ..ui import theme
 
 # graph_view.py lives at <root>/src/mdiscovery/viz/ — parents[3] is <root>.
 ASSETS_DIR = Path(__file__).resolve().parents[3] / "assets" / "cytoscape"
+
+# Above this many entities, drawing the whole graph at once can freeze the
+# WebEngine renderer (and on low-memory boxes get it OOM-killed). We warn and
+# let the user decide to wait, rather than silently hanging or crashing.
+LARGE_GRAPH_WARN = 5000
 
 
 class PythonBridge(QObject):
@@ -71,6 +77,7 @@ class GraphView(QWidget):
         self._repo = repo
         self._ready = False
         self._pending_graph: Optional[dict] = None
+        self._pending_message: Optional[str] = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -90,6 +97,9 @@ class GraphView(QWidget):
         self._bridge.nodesMovedSignal.connect(self._on_nodes_moved)
         self._bridge.viewReadySignal.connect(self._on_view_ready)
         self._web.loadFinished.connect(self._on_load_finished)
+        # Turn a renderer crash (OOM on a huge graph, GPU/GBM failure) into a
+        # readable message instead of a silent blank canvas.
+        self._web.page().renderProcessTerminated.connect(self._on_render_terminated)
 
         self._load_html()
 
@@ -123,6 +133,9 @@ class GraphView(QWidget):
         if self._pending_graph is not None:
             self._push_graph(self._pending_graph)
             self._pending_graph = None
+        if self._pending_message is not None:
+            self._run_js("window.showMessage", self._pending_message)
+            self._pending_message = None
 
     def _on_link_renamed(self, link_id: str, new_label: str) -> None:
         """Persist a canvas-side link rename (the edge label is the link type)."""
@@ -168,11 +181,66 @@ class GraphView(QWidget):
     def load_from_repo(self) -> None:
         if self._repo is None:
             return
+        # Cheap COUNT first — don't materialize a huge graph just to find out
+        # it's huge. Warn before the heavy get_graph_json()/render.
+        count = self._repo.entities.count()
+        if count > LARGE_GRAPH_WARN and not self._confirm_large_render(count):
+            self._show_skipped(count)
+            return
         graph_json = self._repo.get_graph_json()
         if self._ready:
             self._push_graph(graph_json)
         else:
             self._pending_graph = graph_json
+
+    def _confirm_large_render(self, count: int) -> bool:
+        """Warn that rendering a large case may freeze; return True to proceed."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Large case")
+        box.setText(f"This case has {count:,} entities.")
+        box.setInformativeText(
+            "Drawing the whole chart at once can make the app appear frozen "
+            "while it lays out and renders — this is normal; let the analysis "
+            "finish.\n\nRender the full chart now, or skip it and use Search / "
+            "Expand neighbors to pull in just the parts you need?")
+        render_btn = box.addButton("Render anyway", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Skip for now", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(render_btn)
+        box.exec()
+        return box.clickedButton() is render_btn
+
+    def _show_skipped(self, count: int) -> None:
+        """Placeholder shown when the user declines the big render."""
+        message = (
+            f"{count:,} entities — render skipped to keep the app responsive. "
+            "Click Refresh on the toolbar to draw the full chart.")
+        self._pending_graph = None
+        if self._ready:
+            self._run_js("window.showMessage", message)
+        else:
+            self._pending_message = message
+
+    def _on_render_terminated(self, status, exit_code) -> None:
+        """Renderer process died (OOM / GPU). Show guidance, not a blank page."""
+        t = theme.active_tokens()
+        msg = (
+            "The graph view stopped unexpectedly — usually too many items to "
+            "draw at once, or a graphics-driver issue. Open a smaller case or "
+            "use Search/Expand to load less at a time. On Linux you can also "
+            "launch with MDISCOVERY_SOFTWARE_RENDER=1 for software rendering."
+        )
+        self._web.setHtml(
+            f"<body style='margin:0;background:{t['bg_window']};color:{t['text']};"
+            "font:14px Inter,system-ui,sans-serif;display:flex;align-items:center;"
+            "justify-content:center;height:100vh'>"
+            f"<div style='max-width:520px;padding:24px;text-align:center;"
+            f"border:1px solid {t['border']};border-radius:8px'>"
+            f"<div style='font-size:15px;font-weight:600;margin-bottom:8px'>"
+            "Graph view crashed</div>"
+            f"<div style='color:{t['text_muted']};line-height:1.5'>{msg}</div></div></body>"
+        )
+        self._ready = False
 
     def _push_graph(self, graph_json: dict) -> None:
         self._run_js("window.loadGraph", graph_json)
