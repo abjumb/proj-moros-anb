@@ -4,24 +4,51 @@
 <meta charset="UTF-8">
 <title>mDiscovery Graph</title>
 <style>
-  /* Darcula tokens — keep in sync with src/mdiscovery/ui/theme.py TOKENS. */
+  /* Theme tokens arrive at runtime via setTheme(); these are the dark defaults.
+     Keep in sync with src/mdiscovery/ui/theme.py PALETTES. */
+  :root {
+    --bg: #1E1F22;
+    --panel: #2B2D30;
+    --border: #393B40;
+    --text: #DFE1E5;
+    --text-muted: #6F737A;
+    --accent: #3574F0;
+  }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: #1E1F22; overflow: hidden; }
+  body { background: var(--bg); overflow: hidden; }
+  body.grid {
+    background-image: radial-gradient(var(--border) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
   #cy { width: 100vw; height: 100vh; }
   #tooltip {
     position: fixed;
-    background: rgba(43,45,48,0.96);
-    border: 1px solid #393B40;
+    background: var(--panel);
+    border: 1px solid var(--border);
     border-radius: 4px;
     padding: 8px 12px;
-    color: #DFE1E5;
+    color: var(--text);
     font: 12px/1.5 'Inter', 'Segoe UI', system-ui, sans-serif;
     pointer-events: none;
     display: none;
     z-index: 9999;
     max-width: 260px;
   }
-  #tooltip .type { font-size: 10px; color: #6F737A; text-transform: uppercase; letter-spacing: .05em; }
+  #tooltip .type { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
+  #edgeEditor {
+    position: fixed;
+    display: none;
+    z-index: 10000;
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    padding: 3px 8px;
+    font: 12px 'Inter', 'Segoe UI', system-ui, sans-serif;
+    outline: none;
+    min-width: 90px;
+    text-align: center;
+  }
 </style>
 <script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
 <script src="qwebchannel.js"></script>
@@ -29,117 +56,179 @@
 <body>
 <div id="cy"></div>
 <div id="tooltip"></div>
+<input id="edgeEditor" autocomplete="off" spellcheck="false">
 <script>
-// AS-31: Semantic type colour palette (Darcula-tuned — same hue per type as before)
-const TYPE_COLORS = {
-  Person:       { bg: '#253627', border: '#57965C' },
-  Organization: { bg: '#2F2936', border: '#955AE0' },
-  Location:     { bg: '#25324D', border: '#548AF7' },
-  Event:        { bg: '#402929', border: '#DB5C5C' },
-  Document:     { bg: '#3D3223', border: '#F2C55C' },
-  Vehicle:      { bg: '#233838', border: '#43B1B1' },
-  Phone:        { bg: '#273428', border: '#6AAB73' },
-  Email:        { bg: '#362B39', border: '#C57FDB' },
-  Account:      { bg: '#363023', border: '#D5B26C' },
-  Unknown:      { bg: '#2B2D30', border: '#6F737A' },
+// ── Theme state (mutated by setTheme; style functions read it live) ────
+let THEME = {
+  mode: 'dark', bg: '#1E1F22', panel: '#2B2D30', border: '#393B40',
+  text: '#DFE1E5', textMuted: '#6F737A', accent: '#3574F0',
 };
 
-function nodeColor(type) {
-  return (TYPE_COLORS[type] || TYPE_COLORS.Unknown).bg;
+// AS-31: Semantic type colour palette, per theme mode (same hue per type).
+const TYPE_COLORS = {
+  dark: {
+    Person:       { bg: '#253627', border: '#57965C' },
+    Organization: { bg: '#2F2936', border: '#955AE0' },
+    Location:     { bg: '#25324D', border: '#548AF7' },
+    Event:        { bg: '#402929', border: '#DB5C5C' },
+    Document:     { bg: '#3D3223', border: '#F2C55C' },
+    Vehicle:      { bg: '#233838', border: '#43B1B1' },
+    Phone:        { bg: '#273428', border: '#6AAB73' },
+    Email:        { bg: '#362B39', border: '#C57FDB' },
+    Account:      { bg: '#363023', border: '#D5B26C' },
+    Unknown:      { bg: '#2B2D30', border: '#6F737A' },
+  },
+  light: {
+    Person:       { bg: '#E3F0E4', border: '#4A8A50' },
+    Organization: { bg: '#EFE7FA', border: '#8458C9' },
+    Location:     { bg: '#E3ECFB', border: '#3E72D9' },
+    Event:        { bg: '#FBE5E5', border: '#C94F4F' },
+    Document:     { bg: '#FAF1DC', border: '#C29440' },
+    Vehicle:      { bg: '#DFF1F1', border: '#2F9696' },
+    Phone:        { bg: '#E5F1E6', border: '#54935D' },
+    Email:        { bg: '#F4E7F6', border: '#A964C2' },
+    Account:      { bg: '#F4EDDC', border: '#B59149' },
+    Unknown:      { bg: '#EFF0F2', border: '#878B92' },
+  },
+};
+
+function typeColors(type) {
+  const palette = TYPE_COLORS[THEME.mode] || TYPE_COLORS.dark;
+  return palette[type] || palette.Unknown;
 }
-function nodeBorder(type) {
-  return (TYPE_COLORS[type] || TYPE_COLORS.Unknown).border;
+
+// ── Icon library (pushed from Python, pre-colored for the active theme) ─
+let ICON_SVGS = {};          // stem -> svg text
+let TYPE_DEFAULT_ICONS = {}; // semantic type -> stem
+let iconUriCache = {};
+
+function nodeIconStem(ele) {
+  return ele.data('icon') || TYPE_DEFAULT_ICONS[ele.data('type')] || null;
+}
+function nodeImage(ele) {
+  const photo = ele.data('photo');
+  if (photo) return photo;
+  const stem = nodeIconStem(ele);
+  if (!stem || !ICON_SVGS[stem]) return 'none';
+  if (!iconUriCache[stem]) {
+    iconUriCache[stem] = 'data:image/svg+xml;utf8,' + encodeURIComponent(ICON_SVGS[stem]);
+  }
+  return iconUriCache[stem];
+}
+function nodeHasImage(ele) {
+  return !!(ele.data('photo') || (nodeIconStem(ele) && ICON_SVGS[nodeIconStem(ele)]));
 }
 
 // Base stylesheet kept as a const so conditional-formatting rules can be
-// appended (and removed) at runtime via cy.style().
+// appended (and removed) at runtime via cy.style(). All colors are functions
+// reading THEME so setTheme() can restyle without rebuilding the array.
 const STYLE = [
-    {
-      selector: 'node',
-      style: {
-        'background-color': ele => nodeColor(ele.data('type')),
-        'border-color': ele => nodeBorder(ele.data('type')),
-        'border-width': 2,
-        'label': 'data(label)',
-        'color': '#DFE1E5',
-        'font-family': 'Inter, sans-serif',
-        'font-size': 11,
-        'text-valign': 'center',
-        'text-halign': 'center',
-        'text-wrap': 'ellipsis',
-        'text-max-width': 80,
-        'width': 60,
-        'height': 60,
-        'shape': 'ellipse',
-      }
-    },
-    {
-      selector: 'node[type="Organization"]',
-      style: { shape: 'rectangle', width: 70, height: 40 }
-    },
-    {
-      selector: 'node[type="Document"]',
-      style: { shape: 'round-rectangle', width: 65, height: 42 }
-    },
-    {
-      selector: 'node:selected',
-      style: {
-        'border-width': 3,
-        'border-color': '#3574F0',
-        'overlay-color': '#3574F0',
-        'overlay-opacity': 0.15,
-        'overlay-padding': 5,
-        'z-index': 999,
-      }
-    },
-    {
-      selector: 'edge',
-      style: {
-        'width': ele => Math.max(1, (ele.data('strength') || 1) * 2),
-        'line-color': '#393B40',
-        'target-arrow-color': '#6F737A',
-        'curve-style': 'bezier',
-        'label': 'data(type)',
-        'font-family': 'Inter, sans-serif',
-        'font-size': 9,
-        'color': '#6F737A',
-        'text-rotation': 'autorotate',
-      }
-    },
-    {
-      selector: 'edge[direction="directed"]',
-      style: { 'target-arrow-shape': 'triangle' }
-    },
-    {
-      selector: 'edge[direction="undirected"]',
-      style: { 'target-arrow-shape': 'none' }
-    },
-    {
-      selector: 'edge[direction="bidirectional"]',
-      style: {
-        'target-arrow-shape': 'triangle',
-        'source-arrow-shape': 'triangle',
-        'source-arrow-color': '#6F737A',
-      }
-    },
-    {
-      selector: 'edge:selected',
-      style: { 'line-color': '#3574F0', 'target-arrow-color': '#3574F0' }
-    },
-    {
-      selector: '.highlighted',
-      style: {
-        'border-color': '#3574F0',
-        'border-width': 3,
-        'overlay-color': '#3574F0',
-        'overlay-opacity': 0.15,
-        'overlay-padding': 5,
-      }
-    },
-    {
-      selector: '.faded',
-      style: { 'opacity': 0.2 }
+  {
+    selector: 'node',
+    style: {
+      'background-color': ele => typeColors(ele.data('type')).bg,
+      'border-color': ele => typeColors(ele.data('type')).border,
+      'border-width': 2,
+      'background-image': nodeImage,
+      'background-fit': ele => ele.data('photo') ? 'cover' : 'contain',
+      'background-width': ele => ele.data('photo') ? '100%' : '58%',
+      'background-height': ele => ele.data('photo') ? '100%' : '58%',
+      'background-clip': 'node',
+      'label': 'data(label)',
+      'color': () => THEME.text,
+      'font-family': 'Inter, sans-serif',
+      'font-size': ele => ele.data('_fontSize') || 11,
+      'text-valign': ele => nodeHasImage(ele) ? 'bottom' : 'center',
+      'text-halign': 'center',
+      'text-margin-y': ele => nodeHasImage(ele) ? 6 : 0,
+      'text-wrap': 'ellipsis',
+      'text-max-width': 100,
+      'width': ele => ele.data('_size') || 60,
+      'height': ele => ele.data('_size') || 60,
+      'shape': 'ellipse',
     }
+  },
+  {
+    selector: 'node[type="Organization"]',
+    style: {
+      shape: 'round-rectangle',
+      width: ele => ele.data('_size') || 64,
+      height: ele => (ele.data('_size') || 64) * 0.75,
+    }
+  },
+  {
+    selector: 'node[type="Document"]',
+    style: {
+      shape: 'round-rectangle',
+      width: ele => ele.data('_size') || 62,
+      height: ele => (ele.data('_size') || 62) * 0.68,
+    }
+  },
+  {
+    selector: 'node:selected',
+    style: {
+      'border-width': 3,
+      'border-color': () => THEME.accent,
+      'overlay-color': () => THEME.accent,
+      'overlay-opacity': 0.15,
+      'overlay-padding': 5,
+      'z-index': 999,
+    }
+  },
+  {
+    selector: 'edge',
+    style: {
+      'width': ele => Math.max(1, (ele.data('strength') || 1) * 2),
+      'line-color': () => THEME.border,
+      'target-arrow-color': () => THEME.textMuted,
+      'curve-style': 'bezier',
+      'label': 'data(type)',
+      'font-family': 'Inter, sans-serif',
+      'font-size': 9,
+      'color': () => THEME.textMuted,
+      'text-rotation': 'autorotate',
+      'text-background-color': () => THEME.bg,
+      'text-background-opacity': 0.85,
+      'text-background-padding': 2,
+    }
+  },
+  {
+    selector: 'edge[direction="directed"]',
+    style: { 'target-arrow-shape': 'triangle' }
+  },
+  {
+    selector: 'edge[direction="undirected"]',
+    style: { 'target-arrow-shape': 'none' }
+  },
+  {
+    selector: 'edge[direction="bidirectional"]',
+    style: {
+      'target-arrow-shape': 'triangle',
+      'source-arrow-shape': 'triangle',
+      'source-arrow-color': () => THEME.textMuted,
+    }
+  },
+  {
+    selector: 'edge:selected',
+    style: {
+      'line-color': () => THEME.accent,
+      'target-arrow-color': () => THEME.accent,
+    }
+  },
+  {
+    selector: '.highlighted',
+    style: {
+      'border-color': () => THEME.accent,
+      'border-width': 3,
+      'overlay-color': () => THEME.accent,
+      'overlay-opacity': 0.15,
+      'overlay-padding': 5,
+    }
+  },
+  {
+    selector: '.faded',
+    style: { 'opacity': 0.2 }
+  }
 ];
 
 // Conditional formatting: node size scaled by degree (appended after the
@@ -151,6 +240,7 @@ const DEGREE_SIZING_RULE = {
     'height': ele => 36 + Math.min(ele.degree(false), 12) * 7,
   }
 };
+let degreeSizing = false;
 
 const cy = cytoscape({
   container: document.getElementById('cy'),
@@ -159,6 +249,10 @@ const cy = cytoscape({
   layout: { name: 'cose', animate: false }
 });
 
+function refreshStyle() {
+  cy.style(degreeSizing ? STYLE.concat([DEGREE_SIZING_RULE]) : STYLE);
+}
+
 // Escape user-supplied strings before inserting into tooltip HTML.
 function esc(s) {
   return String(s)
@@ -166,15 +260,15 @@ function esc(s) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// Tooltip
+// ── Tooltip ────────────────────────────────────────────────────────────
 const tooltip = document.getElementById('tooltip');
+const INTERNAL_KEYS = ['id', 'label', 'type', 'icon', 'photo', '_size', '_fontSize'];
 cy.on('mouseover', 'node', evt => {
-  const n = evt.target;
-  const d = n.data();
+  const d = evt.target.data();
   const pos = evt.renderedPosition;
   const extra = Object.entries(d)
-    .filter(([k]) => !['id','label','type'].includes(k))
-    .map(([k,v]) => `<b>${esc(k)}:</b> ${esc(v)}`)
+    .filter(([k]) => !INTERNAL_KEYS.includes(k))
+    .map(([k, v]) => `<b>${esc(k)}:</b> ${esc(v)}`)
     .join('<br>');
   tooltip.innerHTML = `<div class="type">${esc(d.type || 'Unknown')}</div>
     <b>${esc(d.label)}</b>${extra ? '<br>' + extra : ''}`;
@@ -184,7 +278,58 @@ cy.on('mouseover', 'node', evt => {
 });
 cy.on('mouseout', 'node', () => { tooltip.style.display = 'none'; });
 
-// Python bridge via QWebChannel
+// ── Edge label editor (click a link to rename it) ─────────────────────
+const edgeEditor = document.getElementById('edgeEditor');
+let editingEdge = null;
+
+function openEdgeEditor(edge, renderedPos) {
+  editingEdge = edge;
+  const mp = renderedPos || edge.renderedMidpoint();
+  edgeEditor.style.left = (mp.x - 55) + 'px';
+  edgeEditor.style.top = (mp.y - 14) + 'px';
+  edgeEditor.value = edge.data('type') || '';
+  edgeEditor.style.display = 'block';
+  edgeEditor.focus();
+  edgeEditor.select();
+}
+function closeEdgeEditor() {
+  editingEdge = null;
+  edgeEditor.style.display = 'none';
+}
+function commitEdgeEdit() {
+  if (!editingEdge) return;
+  const value = edgeEditor.value.trim();
+  if (value && value !== editingEdge.data('type')) {
+    editingEdge.data('type', value);
+    if (pybridge) pybridge.linkRenamed(editingEdge.id(), value);
+  }
+  closeEdgeEditor();
+}
+edgeEditor.addEventListener('keydown', e => {
+  if (e.key === 'Enter') commitEdgeEdit();
+  else if (e.key === 'Escape') closeEdgeEditor();
+});
+edgeEditor.addEventListener('blur', closeEdgeEditor);
+cy.on('tap', 'edge', evt => openEdgeEditor(evt.target, evt.renderedPosition));
+cy.on('pan zoom', closeEdgeEditor);
+
+// ── Grid snap (vs free-flow movement) ──────────────────────────────────
+let gridSnap = false;
+let GRID_STEP = 40;
+cy.on('dragfree', 'node', evt => {
+  if (!gridSnap) return;
+  const moved = evt.target;
+  const targets = moved.selected() ? cy.$('node:selected') : moved;
+  targets.forEach(n => {
+    const p = n.position();
+    n.position({
+      x: Math.round(p.x / GRID_STEP) * GRID_STEP,
+      y: Math.round(p.y / GRID_STEP) * GRID_STEP,
+    });
+  });
+});
+
+// ── Python bridge via QWebChannel ──────────────────────────────────────
 let pybridge = null;
 
 function initChannel() {
@@ -197,12 +342,13 @@ function initChannel() {
 // Try to init channel; fall back gracefully if not in PyQt context
 try { initChannel(); } catch(e) { console.log('Running outside PyQt context'); }
 
-// Node click → notify Python
 cy.on('tap', 'node', evt => {
-  const id = evt.target.data('id');
-  if (pybridge) pybridge.nodeSelected(id);
+  if (pybridge) pybridge.nodeSelected(evt.target.data('id'));
 });
-
+cy.on('dbltap', 'node', evt => {
+  tooltip.style.display = 'none';
+  if (pybridge) pybridge.nodeDoubleClicked(evt.target.data('id'));
+});
 cy.on('tap', evt => {
   if (evt.target === cy && pybridge) pybridge.backgroundTapped();
 });
@@ -252,11 +398,18 @@ window.selectAndFit = function(ids) {
 };
 
 window.addElements = function(data, anchorId) {
-  // Incrementally add nodes/edges not already on the canvas. New nodes are
-  // ringed around the anchor node so they appear where the user expanded.
+  // Incrementally add nodes/edges not already on the canvas. New nodes ring
+  // around the anchor node (or the viewport center when there is no anchor)
+  // so they appear where the user is working.
   const d = (typeof data === 'string') ? JSON.parse(data) : data;
   const anchor = anchorId ? cy.$id(anchorId) : cy.collection();
-  const base = anchor.nonempty() ? anchor.position() : { x: 0, y: 0 };
+  let base;
+  if (anchor.nonempty()) {
+    base = anchor.position();
+  } else {
+    const ext = cy.extent();
+    base = { x: (ext.x1 + ext.x2) / 2, y: (ext.y1 + ext.y2) / 2 };
+  }
 
   const newNodes = (d.nodes || []).filter(n => cy.$id(n.data.id).empty());
   newNodes.forEach((n, i) => {
@@ -283,8 +436,57 @@ window.expandNeighbors = function(nodeId) {
 };
 
 window.setDegreeSizing = function(enabled) {
-  const style = enabled ? STYLE.concat([DEGREE_SIZING_RULE]) : STYLE;
-  cy.style(style);
+  degreeSizing = !!enabled;
+  refreshStyle();
+};
+
+window.setTheme = function(themeObj) {
+  THEME = (typeof themeObj === 'string') ? JSON.parse(themeObj) : themeObj;
+  const root = document.documentElement.style;
+  root.setProperty('--bg', THEME.bg);
+  root.setProperty('--panel', THEME.panel);
+  root.setProperty('--border', THEME.border);
+  root.setProperty('--text', THEME.text);
+  root.setProperty('--text-muted', THEME.textMuted);
+  root.setProperty('--accent', THEME.accent);
+  cy.style().update();
+};
+
+window.setIconLibrary = function(svgMap, typeDefaults) {
+  ICON_SVGS = (typeof svgMap === 'string') ? JSON.parse(svgMap) : (svgMap || {});
+  TYPE_DEFAULT_ICONS = (typeof typeDefaults === 'string')
+    ? JSON.parse(typeDefaults) : (typeDefaults || {});
+  iconUriCache = {};
+  cy.style().update();
+};
+
+window.setGridSnap = function(enabled, step) {
+  gridSnap = !!enabled;
+  if (step) GRID_STEP = step;
+  document.body.classList.toggle('grid', gridSnap);
+};
+
+window.getSelectedNodes = function() {
+  return cy.$('node:selected').map(n => n.id());
+};
+
+window.updateNodeData = function(id, data, replace) {
+  const node = cy.$id(id);
+  if (node.empty()) return false;
+  const d = (typeof data === 'string') ? JSON.parse(data) : data;
+  if (replace) {
+    // Drop keys not present in the new payload (e.g. a removed photo or
+    // deleted property) — plain data() only merges.
+    const stale = Object.keys(node.data()).filter(k => k !== 'id' && !(k in d));
+    if (stale.length) node.removeData(stale.join(' '));
+  }
+  node.data(d);
+  cy.style().update();
+  return true;
+};
+
+window.removeElement = function(id) {
+  cy.$id(id).remove();
 };
 </script>
 </body>

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from PyQt6.QtCore import QObject, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtWebChannel import QWebChannel
@@ -17,6 +17,8 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
 
 from ..graph.repository import GraphRepository
+from ..icons import DEFAULT_TYPE_ICONS, load_icon_svgs
+from ..ui import theme
 
 # graph_view.py lives at <root>/src/mdiscovery/viz/ — parents[3] is <root>.
 ASSETS_DIR = Path(__file__).resolve().parents[3] / "assets" / "cytoscape"
@@ -26,16 +28,26 @@ class PythonBridge(QObject):
     """Exposed to JS as `pybridge`. Handles JS → Python signals."""
 
     nodeSelectedSignal = pyqtSignal(str)
+    nodeDoubleClickedSignal = pyqtSignal(str)
     backgroundTappedSignal = pyqtSignal()
+    linkRenamedSignal = pyqtSignal(str, str)
     viewReadySignal = pyqtSignal()
 
     @pyqtSlot(str)
     def nodeSelected(self, node_id: str) -> None:
         self.nodeSelectedSignal.emit(node_id)
 
+    @pyqtSlot(str)
+    def nodeDoubleClicked(self, node_id: str) -> None:
+        self.nodeDoubleClickedSignal.emit(node_id)
+
     @pyqtSlot()
     def backgroundTapped(self) -> None:
         self.backgroundTappedSignal.emit()
+
+    @pyqtSlot(str, str)
+    def linkRenamed(self, link_id: str, new_label: str) -> None:
+        self.linkRenamedSignal.emit(link_id, new_label)
 
     @pyqtSlot()
     def viewReady(self) -> None:
@@ -46,6 +58,7 @@ class GraphView(QWidget):
     """Cytoscape.js graph embedded in a PyQt6 WebEngine widget."""
 
     nodeSelected = pyqtSignal(str)
+    nodeDoubleClicked = pyqtSignal(str)
     backgroundTapped = pyqtSignal()
 
     def __init__(self, repo: Optional[GraphRepository] = None, parent: Optional[QWidget] = None):
@@ -66,7 +79,9 @@ class GraphView(QWidget):
         self._web.page().setWebChannel(self._channel)
 
         self._bridge.nodeSelectedSignal.connect(self.nodeSelected)
+        self._bridge.nodeDoubleClickedSignal.connect(self.nodeDoubleClicked)
         self._bridge.backgroundTappedSignal.connect(self.backgroundTapped)
+        self._bridge.linkRenamedSignal.connect(self._on_link_renamed)
         self._bridge.viewReadySignal.connect(self._on_view_ready)
         self._web.loadFinished.connect(self._on_load_finished)
 
@@ -77,7 +92,11 @@ class GraphView(QWidget):
         if html_path.exists():
             self._web.setUrl(QUrl.fromLocalFile(str(html_path)))
         else:
-            self._web.setHtml("<body style='background:#1E1F22;color:#DFE1E5'>graph.html not found</body>")
+            t = theme.active_tokens()
+            self._web.setHtml(
+                f"<body style='background:{t['bg_window']};color:{t['text']}'>"
+                "graph.html not found</body>"
+            )
 
     def _on_load_finished(self, ok: bool) -> None:
         if not ok:
@@ -94,9 +113,15 @@ class GraphView(QWidget):
 
     def _on_view_ready(self) -> None:
         self._ready = True
+        self.apply_theme()
         if self._pending_graph is not None:
             self._push_graph(self._pending_graph)
             self._pending_graph = None
+
+    def _on_link_renamed(self, link_id: str, new_label: str) -> None:
+        """Persist a canvas-side link rename (the edge label is the link type)."""
+        if self._repo is not None:
+            self._repo.links.update_fields(link_id, link_type=new_label)
 
     def load_from_repo(self) -> None:
         if self._repo is None:
@@ -118,6 +143,17 @@ class GraphView(QWidget):
         """
         payload = ", ".join(json.dumps(a) for a in args)
         self._web.page().runJavaScript(f"{fn}({payload})")
+
+    def apply_theme(self) -> None:
+        """Push the active palette and a re-colored icon library to the canvas."""
+        self._run_js("window.setTheme", theme.canvas_theme())
+        icon_color = theme.active_tokens()["text"]
+        svgs = {
+            stem: svg.replace("currentColor", icon_color)
+            for stem, svg in load_icon_svgs().items()
+        }
+        defaults = {st.value: stem for st, stem in DEFAULT_TYPE_ICONS.items()}
+        self._run_js("window.setIconLibrary", svgs, defaults)
 
     def apply_layout(self, name: str) -> None:
         """name: 'cose' | 'hierarchical' | 'circular' | 'grid'"""
@@ -145,9 +181,34 @@ class GraphView(QWidget):
             self._run_js("window.addElements", elements, node_id)
         self._run_js("window.expandNeighbors", node_id)
 
+    def add_elements(self, elements: dict, anchor_id: Optional[str] = None) -> None:
+        """Incrementally add a node-link payload without relayouting the canvas."""
+        self._run_js("window.addElements", elements, anchor_id)
+
+    def update_node(self, node_id: str, data: dict, replace: bool = False) -> None:
+        """Update an on-canvas node's data without reloading the graph.
+
+        ``replace=True`` also drops keys missing from ``data`` (removed photo,
+        deleted properties) instead of merging.
+        """
+        self._run_js("window.updateNodeData", node_id, data, bool(replace))
+
+    def remove_element(self, element_id: str) -> None:
+        self._run_js("window.removeElement", element_id)
+
     def set_degree_sizing(self, enabled: bool) -> None:
         """Toggle conditional formatting: node size scaled by degree."""
         self._run_js("window.setDegreeSizing", bool(enabled))
+
+    def set_grid_snap(self, enabled: bool, step: int = 40) -> None:
+        """Grid-block movement (snap on drop) vs free-flow canvas."""
+        self._run_js("window.setGridSnap", bool(enabled), int(step))
+
+    def get_selected_nodes(self, callback: Callable[[list], None]) -> None:
+        """Async: fetch selected node ids from the canvas, then call ``callback``."""
+        self._web.page().runJavaScript(
+            "window.getSelectedNodes()", lambda ids: callback(ids or [])
+        )
 
     def set_repo(self, repo: GraphRepository) -> None:
         self._repo = repo
