@@ -77,7 +77,7 @@ class GraphView(QWidget):
         if html_path.exists():
             self._web.setUrl(QUrl.fromLocalFile(str(html_path)))
         else:
-            self._web.setHtml("<body style='background:#0d1117;color:#c9d1d9'>graph.html not found</body>")
+            self._web.setHtml("<body style='background:#1E1F22;color:#DFE1E5'>graph.html not found</body>")
 
     def _on_load_finished(self, ok: bool) -> None:
         if not ok:

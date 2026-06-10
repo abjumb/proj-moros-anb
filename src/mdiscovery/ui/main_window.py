@@ -21,6 +21,7 @@ from ..persistence import copy_case, RecentCases
 from ..viz.graph_view import GraphView
 from .import_dialog import ImportDialog
 from .find_path_dialog import FindPathDialog
+from .theme import MONO_FONT_FAMILY, TOKENS
 
 # QFileDialog name-filter label -> export format.
 _EXPORT_FILTERS: dict[str, ExportFormat] = {
@@ -42,11 +43,17 @@ class EntityInspector(QWidget):
 
     expandRequested = pyqtSignal(str)
 
+    _PLACEHOLDER = f'<span style="color: {TOKENS["text_muted"]}">Select a node to inspect</span>'
+
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
+        # Let the `EntityInspector { background }` QSS rule paint the panel.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._entity_id: Optional[str] = None
         layout = QVBoxLayout(self)
-        self._title = QLabel("Select a node to inspect")
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+        self._title = QLabel(self._PLACEHOLDER)
         self._title.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._title.setWordWrap(True)
         layout.addWidget(self._title)
@@ -59,18 +66,22 @@ class EntityInspector(QWidget):
 
     def show_entity(self, entity: Entity) -> None:
         self._entity_id = entity.id
+        muted, mono = TOKENS["text_muted"], MONO_FONT_FAMILY
         lines = [
             f"<b>{entity.label}</b>",
-            f"<small>Type: {entity.semantic_type.value}</small>",
+            f'<small style="color: {muted}">{entity.semantic_type.value.upper()}</small>',
         ]
         for k, v in entity.properties.items():
-            lines.append(f"<b>{k}:</b> {v}")
+            lines.append(
+                f'<span style="color: {muted}">{k}</span>&nbsp; '
+                f'<span style="font-family: \'{mono}\', monospace; font-size: 12px">{v}</span>'
+            )
         self._title.setText("<br>".join(lines))
         self._expand_btn.setVisible(True)
 
     def clear(self) -> None:
         self._entity_id = None
-        self._title.setText("Select a node to inspect")
+        self._title.setText(self._PLACEHOLDER)
         self._expand_btn.setVisible(False)
 
     def _on_expand(self) -> None:
