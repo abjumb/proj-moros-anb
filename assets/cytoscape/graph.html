@@ -51,9 +51,9 @@ function nodeBorder(type) {
   return (TYPE_COLORS[type] || TYPE_COLORS.Unknown).border;
 }
 
-const cy = cytoscape({
-  container: document.getElementById('cy'),
-  style: [
+// Base stylesheet kept as a const so conditional-formatting rules can be
+// appended (and removed) at runtime via cy.style().
+const STYLE = [
     {
       selector: 'node',
       style: {
@@ -140,10 +140,31 @@ const cy = cytoscape({
       selector: '.faded',
       style: { 'opacity': 0.2 }
     }
-  ],
+];
+
+// Conditional formatting: node size scaled by degree (appended after the
+// type-specific rules so it overrides their fixed width/height).
+const DEGREE_SIZING_RULE = {
+  selector: 'node',
+  style: {
+    'width':  ele => 36 + Math.min(ele.degree(false), 12) * 7,
+    'height': ele => 36 + Math.min(ele.degree(false), 12) * 7,
+  }
+};
+
+const cy = cytoscape({
+  container: document.getElementById('cy'),
+  style: STYLE,
   elements: [],
   layout: { name: 'cose', animate: false }
 });
+
+// Escape user-supplied strings before inserting into tooltip HTML.
+function esc(s) {
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 
 // Tooltip
 const tooltip = document.getElementById('tooltip');
@@ -153,10 +174,10 @@ cy.on('mouseover', 'node', evt => {
   const pos = evt.renderedPosition;
   const extra = Object.entries(d)
     .filter(([k]) => !['id','label','type'].includes(k))
-    .map(([k,v]) => `<b>${k}:</b> ${v}`)
+    .map(([k,v]) => `<b>${esc(k)}:</b> ${esc(v)}`)
     .join('<br>');
-  tooltip.innerHTML = `<div class="type">${d.type || 'Unknown'}</div>
-    <b>${d.label}</b>${extra ? '<br>' + extra : ''}`;
+  tooltip.innerHTML = `<div class="type">${esc(d.type || 'Unknown')}</div>
+    <b>${esc(d.label)}</b>${extra ? '<br>' + extra : ''}`;
   tooltip.style.display = 'block';
   tooltip.style.left = (pos.x + 15) + 'px';
   tooltip.style.top  = (pos.y - 10) + 'px';
@@ -197,11 +218,14 @@ window.loadGraph = function(jsonStr) {
 };
 
 window.applyLayout = function(name) {
+  // Animation is pleasant on workbench-sized graphs and pure cost on large
+  // ones — skip it once the canvas holds thousands of elements.
+  const animate = cy.elements().length < 1500;
   const layouts = {
-    cose:        { name: 'cose',        animate: true, animationDuration: 400 },
-    hierarchical:{ name: 'breadthfirst', animate: true, directed: true },
-    circular:    { name: 'circle',       animate: true },
-    grid:        { name: 'grid',         animate: true },
+    cose:        { name: 'cose',        animate, animationDuration: 400 },
+    hierarchical:{ name: 'breadthfirst', animate, directed: true },
+    circular:    { name: 'circle',       animate },
+    grid:        { name: 'grid',         animate },
   };
   const opts = layouts[name] || layouts.cose;
   cy.layout(opts).run();
@@ -216,9 +240,10 @@ window.clearHighlight = function() {
   cy.elements().removeClass('faded').removeClass('highlighted');
 };
 
-window.searchAndLocate = function(query) {
-  const q = query.toLowerCase();
-  const matches = cy.nodes().filter(n => n.data('label').toLowerCase().includes(q));
+window.selectAndFit = function(ids) {
+  const wanted = new Set(ids);
+  cy.elements().unselect();
+  const matches = cy.nodes().filter(n => wanted.has(n.id()));
   if (matches.length) {
     cy.fit(matches, 80);
     matches.select();
@@ -226,9 +251,40 @@ window.searchAndLocate = function(query) {
   return matches.length;
 };
 
+window.addElements = function(data, anchorId) {
+  // Incrementally add nodes/edges not already on the canvas. New nodes are
+  // ringed around the anchor node so they appear where the user expanded.
+  const d = (typeof data === 'string') ? JSON.parse(data) : data;
+  const anchor = anchorId ? cy.$id(anchorId) : cy.collection();
+  const base = anchor.nonempty() ? anchor.position() : { x: 0, y: 0 };
+
+  const newNodes = (d.nodes || []).filter(n => cy.$id(n.data.id).empty());
+  newNodes.forEach((n, i) => {
+    const angle = (2 * Math.PI * i) / Math.max(newNodes.length, 1);
+    n.position = {
+      x: base.x + 130 * Math.cos(angle),
+      y: base.y + 130 * Math.sin(angle),
+    };
+  });
+  cy.add(newNodes);
+
+  const newEdges = (d.edges || []).filter(e =>
+    cy.$id(e.data.id).empty() &&
+    cy.$id(e.data.source).nonempty() &&
+    cy.$id(e.data.target).nonempty());
+  cy.add(newEdges);
+
+  return newNodes.length + newEdges.length;
+};
+
 window.expandNeighbors = function(nodeId) {
   const node = cy.$(`#${nodeId}`);
   node.neighborhood().removeClass('faded');
+};
+
+window.setDegreeSizing = function(enabled) {
+  const style = enabled ? STYLE.concat([DEGREE_SIZING_RULE]) : STYLE;
+  cy.style(style);
 };
 </script>
 </body>
