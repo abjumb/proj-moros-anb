@@ -33,3 +33,15 @@ def test_schema_idempotent(tmp_path: Path):
     GraphDatabase(case).close()
     # Re-opening must not fail on CREATE TABLE IF NOT EXISTS
     GraphDatabase(case).close()
+
+
+def test_close_is_idempotent_and_guards_connection(tmp_path: Path):
+    db = GraphDatabase(tmp_path / "case")
+    db.close()
+    db.close()  # second close must not raise
+    try:
+        db.connection
+        raised = False
+    except RuntimeError:
+        raised = True
+    assert raised, "connection after close should raise RuntimeError"

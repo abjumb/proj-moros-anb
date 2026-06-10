@@ -107,3 +107,21 @@ def test_empty_labels_skipped(repo: GraphRepository, tmp_path: Path):
                                        semantic_type=SemanticType.PERSON)]
     ImportPipeline(repo).commit(ds, m)
     assert repo.entities.count() == 2  # blank row skipped
+
+
+def test_reimport_does_not_duplicate_links(repo: GraphRepository, contacts_csv: Path):
+    """Stable link ids make re-imports MERGE — the docstring's promise."""
+    ds = IngestionService().load(contacts_csv)
+    pipeline = ImportPipeline(repo)
+    pipeline.commit(ds, _link_mapping())
+    first = repo.links.count()
+    pipeline.commit(ds, _link_mapping())
+    assert repo.links.count() == first
+
+
+def test_link_ids_are_stable_across_runs(repo: GraphRepository, contacts_csv: Path):
+    ds = IngestionService().load(contacts_csv)
+    pipeline = ImportPipeline(repo)
+    links_a = pipeline._build_graph_objects(ds, _link_mapping())[1]
+    links_b = pipeline._build_graph_objects(ds, _link_mapping())[1]
+    assert sorted(l.id for l in links_a) == sorted(l.id for l in links_b)

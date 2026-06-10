@@ -31,6 +31,9 @@ class IngestionService:
     """Detect encoding, parse CSV/XLSX into a StagedDataset."""
 
     SAMPLE_ROWS = 5
+    # Type inference reads at most this many non-null values per column —
+    # pd.to_datetime per value over a whole 100k-row column is pure overhead.
+    TYPE_INFERENCE_SAMPLE = 200
 
     def load(self, path: str | Path) -> StagedDataset:
         path = Path(path)
@@ -69,7 +72,7 @@ class IngestionService:
         column_types: dict[str, str] = {}
 
         for col in df.columns:
-            non_null = df[col].dropna().tolist()
+            non_null = df[col].dropna().head(self.TYPE_INFERENCE_SAMPLE).tolist()
             column_samples[col] = non_null[: self.SAMPLE_ROWS]
             column_types[col] = self._infer_type(non_null)
 

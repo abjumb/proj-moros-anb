@@ -6,9 +6,9 @@ Uses MERGE semantics so re-running an import never causes a silent duplicate exp
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any, Optional
-import uuid
 
 from .ingestion import StagedDataset
 from ..graph.models import Entity, Link, SemanticType, LinkDirection
@@ -67,7 +67,7 @@ class ImportPipeline:
         """Build a CommitPreview (dry-run) — nothing is written to the graph."""
         entities, links, warnings = self._build_graph_objects(dataset, mapping)
 
-        existing_ids = {e.id for e in self._repo.entities.all()}
+        existing_ids = self._repo.entities.all_ids()
         dupes = sum(1 for e in entities if e.id in existing_ids)
         if dupes:
             warnings.append(f"{dupes} entit{'ies' if dupes != 1 else 'y'} already exist and will be updated.")
@@ -92,7 +92,7 @@ class ImportPipeline:
         """Write confirmed, mapped data into the embedded graph using MERGE semantics."""
         entities, links, warnings = self._build_graph_objects(dataset, mapping)
 
-        existing_ids = {e.id for e in self._repo.entities.all()}
+        existing_ids = self._repo.entities.all_ids()
         dupes = sum(1 for e in entities if e.id in existing_ids)
 
         self._repo.entities.upsert_batch(entities)
@@ -118,6 +118,7 @@ class ImportPipeline:
         label_cols = mapping.label_columns()
         src_cols = mapping.source_columns()
         tgt_cols = mapping.target_columns()
+        link_type_cols = [m for m in mapping.column_mappings if m.role == "link_type"]
 
         has_link_mapping = bool(src_cols and tgt_cols)
 
@@ -149,13 +150,13 @@ class ImportPipeline:
                     # Attach extra attribute columns
                     extra_props = self._collect_attrs(row, mapping, [src_col.column, tgt_col.column])
                     link_type = mapping.default_link_type
-                    for m in mapping.column_mappings:
-                        if m.role == "link_type":
-                            lt = str(row.get(m.column) or "").strip()
-                            if lt:
-                                link_type = lt
+                    for m in link_type_cols:
+                        lt = str(row.get(m.column) or "").strip()
+                        if lt:
+                            link_type = lt
 
                     links.append(Link(
+                        id=self._stable_link_id(src_id, tgt_id, link_type),
                         source_id=src_id,
                         target_id=tgt_id,
                         link_type=link_type,
@@ -185,8 +186,18 @@ class ImportPipeline:
     @staticmethod
     def _stable_id(label: str, semantic_type: SemanticType) -> str:
         """Deterministic ID from label + type so re-importing merges, not duplicates."""
-        import hashlib
         key = f"{semantic_type.value}::{label.lower().strip()}"
+        return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+    @staticmethod
+    def _stable_link_id(source_id: str, target_id: str, link_type: str) -> str:
+        """Deterministic link ID so re-imports merge instead of duplicating.
+
+        Random UUIDs previously defeated the MERGE semantics promised in the
+        module docstring: every re-import minted fresh ids and silently
+        doubled the link set.
+        """
+        key = f"{source_id}->{target_id}::{link_type}"
         return hashlib.sha256(key.encode()).hexdigest()[:16]
 
     @staticmethod
