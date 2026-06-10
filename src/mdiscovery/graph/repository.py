@@ -79,10 +79,10 @@ class EntityRepository:
         return _entity_from_row(r.get_next()) if r.has_next() else None
 
     def search(self, query: str) -> list[Entity]:
-        """Case-insensitive substring match on label."""
+        """Case-insensitive substring match on label, ordered for stable results."""
         r = self._c.execute(
             "MATCH (e:Entity) WHERE lower(e.label) CONTAINS lower($q) "
-            f"RETURN {_ENTITY_RETURN}",
+            f"RETURN {_ENTITY_RETURN} ORDER BY e.label, e.id",
             {"q": query},
         )
         return _collect_entities(r)

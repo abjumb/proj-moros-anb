@@ -7,6 +7,7 @@ Uses MERGE semantics so re-running an import never causes a silent duplicate exp
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -156,7 +157,7 @@ class ImportPipeline:
                             link_type = lt
 
                     links.append(Link(
-                        id=self._stable_link_id(src_id, tgt_id, link_type),
+                        id=self._stable_link_id(src_id, tgt_id, link_type, extra_props),
                         source_id=src_id,
                         target_id=tgt_id,
                         link_type=link_type,
@@ -190,14 +191,20 @@ class ImportPipeline:
         return hashlib.sha256(key.encode()).hexdigest()[:16]
 
     @staticmethod
-    def _stable_link_id(source_id: str, target_id: str, link_type: str) -> str:
+    def _stable_link_id(
+        source_id: str, target_id: str, link_type: str, properties: dict[str, Any]
+    ) -> str:
         """Deterministic link ID so re-imports merge instead of duplicating.
 
         Random UUIDs previously defeated the MERGE semantics promised in the
         module docstring: every re-import minted fresh ids and silently
-        doubled the link set.
+        doubled the link set. Properties are folded into the key so that
+        genuinely distinct relationships between the same pair — e.g. two calls
+        of different weight, which the i2 model represents as parallel links —
+        keep separate ids, while re-importing identical rows still collapses.
         """
-        key = f"{source_id}->{target_id}::{link_type}"
+        props = json.dumps(properties, sort_keys=True, default=str)
+        key = f"{source_id}->{target_id}::{link_type}::{props}"
         return hashlib.sha256(key.encode()).hexdigest()[:16]
 
     @staticmethod

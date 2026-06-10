@@ -179,7 +179,8 @@ def test_communities_deterministic():
     assert runs[0] == runs[1] == runs[2]
 
 
-def test_betweenness_sampled_matches_exact_at_full_size():
+def test_betweenness_sampled_full_size_is_exact():
+    # sample_size >= n short-circuits the sampling branch → exact result.
     entities, links = _path_graph()
     exact = betweenness_centrality(entities, links)
     sampled = betweenness_centrality(entities, links, sample_size=len(entities))
@@ -191,3 +192,33 @@ def test_betweenness_sampled_preserves_ranking():
     entities, links = _star()
     sampled = betweenness_centrality(entities, links, sample_size=2, seed=7)
     assert sampled["h"] >= max(sampled[i] for i in ("a", "b", "c"))
+
+
+def test_betweenness_sampled_is_unbiased():
+    """The n/k pivot scaling must recover the exact magnitude, not half/double.
+
+    Regression guard for the `scale_up / 2.0` factor: averaged over many seeds
+    the sampled estimate tracks exact betweenness within tolerance.
+    """
+    import random as _random
+    n = 40
+    entities = [Entity(label=f"E{i}", id=f"e{i}") for i in range(n)]
+    rng = _random.Random(0)
+    links = [Link(source_id=f"e{i}", target_id=f"e{rng.randrange(i)}", id=f"t{i}")
+             for i in range(1, n)]  # random tree → connected
+    exact = betweenness_centrality(entities, links, normalized=False)
+    runs = [betweenness_centrality(entities, links, normalized=False,
+                                   sample_size=15, seed=s) for s in range(150)]
+    avg = {v: sum(r[v] for r in runs) / len(runs) for v in exact}
+    hubs = [v for v in exact if exact[v] > 5]
+    assert hubs  # the tree has real brokers
+    for v in hubs:
+        assert abs(avg[v] - exact[v]) / exact[v] < 0.15, (v, avg[v], exact[v])
+
+
+def test_recommended_sample_size_policy():
+    from mdiscovery.analysis.metrics import (
+        recommended_sample_size, BETWEENNESS_EXACT_LIMIT, BETWEENNESS_SAMPLE,
+    )
+    assert recommended_sample_size(BETWEENNESS_EXACT_LIMIT) is None
+    assert recommended_sample_size(BETWEENNESS_EXACT_LIMIT + 1) == BETWEENNESS_SAMPLE

@@ -23,7 +23,9 @@ from pathlib import Path
 from typing import Optional
 
 from ..graph.models import Entity, Link, LinkDirection
-from ..analysis.metrics import betweenness_centrality, graph_summary
+from ..analysis.metrics import (
+    betweenness_centrality, graph_summary, recommended_sample_size,
+)
 
 
 class ExportFormat(str, Enum):
@@ -240,10 +242,9 @@ def to_report(
 
     lines.append("## Key brokers (betweenness centrality)")
     lines.append("")
-    # Exact Brandes is O(V·E); above ~2k entities switch to the pivot
-    # approximation so report export stays interactive on large cases.
-    sample = 500 if len(entities) > 2000 else None
-    bc = betweenness_centrality(entities, links, sample_size=sample)
+    bc = betweenness_centrality(
+        entities, links, sample_size=recommended_sample_size(len(entities))
+    )
     labels = {e.id: e.label for e in entities}
     brokers = sorted(
         ((eid, score) for eid, score in bc.items() if score > 0),

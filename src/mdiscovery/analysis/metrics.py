@@ -192,6 +192,21 @@ def graph_summary(
 # parallel links (adjacency is a set): brokerage/closeness/influence questions
 # are about who can reach whom, not arrow direction.
 
+# Exact Brandes is O(V·E); past this many nodes the app-facing entry points
+# switch to the pivot approximation so betweenness stays interactive.
+BETWEENNESS_EXACT_LIMIT = 2000
+BETWEENNESS_SAMPLE = 500
+
+
+def recommended_sample_size(node_count: int) -> int | None:
+    """Sampling policy for betweenness — None (exact) below the limit.
+
+    Single source of truth so every caller (report export, the *_from_repo
+    wrapper) inherits the same cost protection instead of re-deciding it.
+    """
+    return BETWEENNESS_SAMPLE if node_count > BETWEENNESS_EXACT_LIMIT else None
+
+
 def betweenness_centrality(
     entities: list[Entity],
     links: list[Link],
@@ -377,7 +392,11 @@ def graph_summary_from_repo(repo, top_n: int = 10) -> GraphSummary:
 
 
 def betweenness_centrality_from_repo(repo) -> dict[str, float]:
-    return betweenness_centrality(repo.entities.all(), repo.links.all())
+    entities = repo.entities.all()
+    links = repo.links.all()
+    return betweenness_centrality(
+        entities, links, sample_size=recommended_sample_size(len(entities))
+    )
 
 
 def closeness_centrality_from_repo(repo) -> dict[str, float]:

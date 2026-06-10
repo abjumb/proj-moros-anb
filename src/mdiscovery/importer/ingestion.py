@@ -72,9 +72,18 @@ class IngestionService:
         column_types: dict[str, str] = {}
 
         for col in df.columns:
-            non_null = df[col].dropna().head(self.TYPE_INFERENCE_SAMPLE).tolist()
-            column_samples[col] = non_null[: self.SAMPLE_ROWS]
-            column_types[col] = self._infer_type(non_null)
+            non_null = df[col].dropna()
+            column_samples[col] = non_null.head(self.SAMPLE_ROWS).tolist()
+            # Spread the inference sample across the whole column, not just the
+            # head — otherwise a column that turns mixed only in later rows is
+            # misclassified on large files (and never on small ones).
+            n = len(non_null)
+            if n > self.TYPE_INFERENCE_SAMPLE:
+                step = n // self.TYPE_INFERENCE_SAMPLE
+                inference_sample = non_null.iloc[::step].tolist()
+            else:
+                inference_sample = non_null.tolist()
+            column_types[col] = self._infer_type(inference_sample)
 
         # Normalise missing values to None. `df.where(pd.notna(df), None)` is
         # unreliable under pandas 3.x (NaN leaks back into object columns), so
