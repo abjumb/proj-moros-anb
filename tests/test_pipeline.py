@@ -107,3 +107,52 @@ def test_empty_labels_skipped(repo: GraphRepository, tmp_path: Path):
                                        semantic_type=SemanticType.PERSON)]
     ImportPipeline(repo).commit(ds, m)
     assert repo.entities.count() == 2  # blank row skipped
+
+
+def test_reimport_does_not_duplicate_links(repo: GraphRepository, contacts_csv: Path):
+    """Stable link ids make re-imports MERGE — the docstring's promise."""
+    ds = IngestionService().load(contacts_csv)
+    pipeline = ImportPipeline(repo)
+    pipeline.commit(ds, _link_mapping())
+    first = repo.links.count()
+    pipeline.commit(ds, _link_mapping())
+    assert repo.links.count() == first
+
+
+def test_link_ids_are_stable_across_runs(repo: GraphRepository, contacts_csv: Path):
+    ds = IngestionService().load(contacts_csv)
+    pipeline = ImportPipeline(repo)
+    links_a = pipeline._build_graph_objects(ds, _link_mapping())[1]
+    links_b = pipeline._build_graph_objects(ds, _link_mapping())[1]
+    assert sorted(l.id for l in links_a) == sorted(l.id for l in links_b)
+
+
+def test_distinct_same_pair_links_preserved_within_one_import(repo: GraphRepository, tmp_path: Path):
+    """Two A->B 'call' rows with different attributes are distinct relationships
+    (i2 allows parallel same-type links) and must not collapse to one."""
+    p = tmp_path / "calls.csv"
+    p.write_text(
+        "caller,callee,rel,weight\n"
+        "Alice,Bob,call,0.2\n"
+        "Alice,Bob,call,0.9\n"
+        "Alice,Bob,call,0.2\n"   # exact duplicate of row 1 — SHOULD merge
+    )
+    ds = IngestionService().load(p)
+    m = ImportMapping()
+    m.column_mappings = [
+        ColumnMapping(column="caller", role="link_source", semantic_type=SemanticType.PERSON),
+        ColumnMapping(column="callee", role="link_target", semantic_type=SemanticType.PERSON),
+        ColumnMapping(column="rel", role="link_type"),
+        ColumnMapping(column="weight", role="entity_attr", attr_name="weight"),
+    ]
+    pipeline = ImportPipeline(repo)
+    _, links, _ = pipeline._build_graph_objects(ds, m)
+    # rows 1 and 3 are identical → same id (merged at the DB); row 2 differs.
+    assert len({l.id for l in links}) == 2
+
+    pipeline.commit(ds, m)
+    assert repo.links.count() == 2
+    assert sorted(l.properties["weight"] for l in repo.links.all()) == ["0.2", "0.9"]
+    # Re-import is still idempotent.
+    pipeline.commit(ds, m)
+    assert repo.links.count() == 2

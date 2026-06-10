@@ -31,6 +31,9 @@ class IngestionService:
     """Detect encoding, parse CSV/XLSX into a StagedDataset."""
 
     SAMPLE_ROWS = 5
+    # Type inference reads at most this many non-null values per column —
+    # pd.to_datetime per value over a whole 100k-row column is pure overhead.
+    TYPE_INFERENCE_SAMPLE = 200
 
     def load(self, path: str | Path) -> StagedDataset:
         path = Path(path)
@@ -69,9 +72,18 @@ class IngestionService:
         column_types: dict[str, str] = {}
 
         for col in df.columns:
-            non_null = df[col].dropna().tolist()
-            column_samples[col] = non_null[: self.SAMPLE_ROWS]
-            column_types[col] = self._infer_type(non_null)
+            non_null = df[col].dropna()
+            column_samples[col] = non_null.head(self.SAMPLE_ROWS).tolist()
+            # Spread the inference sample across the whole column, not just the
+            # head — otherwise a column that turns mixed only in later rows is
+            # misclassified on large files (and never on small ones).
+            n = len(non_null)
+            if n > self.TYPE_INFERENCE_SAMPLE:
+                step = n // self.TYPE_INFERENCE_SAMPLE
+                inference_sample = non_null.iloc[::step].tolist()
+            else:
+                inference_sample = non_null.tolist()
+            column_types[col] = self._infer_type(inference_sample)
 
         # Normalise missing values to None. `df.where(pd.notna(df), None)` is
         # unreliable under pandas 3.x (NaN leaks back into object columns), so

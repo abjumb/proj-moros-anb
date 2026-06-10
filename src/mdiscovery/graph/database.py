@@ -46,12 +46,22 @@ class GraphDatabase:
 
     @property
     def connection(self) -> kuzu.Connection:
+        if self._conn is None:
+            raise RuntimeError("GraphDatabase is closed")
         return self._conn
 
     def close(self) -> None:
-        """Kuzu closes on GC, but call this for explicit cleanup."""
-        del self._conn
-        del self._db
+        """Release the database file and WAL sidecar immediately.
+
+        Explicit close (rather than relying on GC) so switching cases can
+        reopen a path without racing the old handles. Safe to call twice.
+        """
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
+        if self._db is not None:
+            self._db.close()
+            self._db = None
 
     def __enter__(self):
         return self

@@ -108,24 +108,46 @@ class GraphView(QWidget):
             self._pending_graph = graph_json
 
     def _push_graph(self, graph_json: dict) -> None:
-        js_payload = json.dumps(graph_json)
-        self._web.page().runJavaScript(f"window.loadGraph({js_payload!r})")
+        self._run_js("window.loadGraph", graph_json)
+
+    def _run_js(self, fn: str, *args) -> None:
+        """Invoke a JS API function with arguments serialized via json.dumps.
+
+        json.dumps (not repr) is the only safe way to embed Python values in a
+        script string — labels and queries are user data.
+        """
+        payload = ", ".join(json.dumps(a) for a in args)
+        self._web.page().runJavaScript(f"{fn}({payload})")
 
     def apply_layout(self, name: str) -> None:
         """name: 'cose' | 'hierarchical' | 'circular' | 'grid'"""
-        self._web.page().runJavaScript(f"window.applyLayout({name!r})")
+        self._run_js("window.applyLayout", name)
 
     def highlight_path(self, node_ids: list[str]) -> None:
-        self._web.page().runJavaScript(f"window.highlightPath({json.dumps(node_ids)})")
+        self._run_js("window.highlightPath", node_ids)
 
     def clear_highlight(self) -> None:
         self._web.page().runJavaScript("window.clearHighlight()")
 
-    def search_and_locate(self, query: str) -> None:
-        self._web.page().runJavaScript(f"window.searchAndLocate({query!r})")
+    def locate_nodes(self, node_ids: list[str]) -> None:
+        """Select and zoom to the given nodes (repo-backed search results)."""
+        self._run_js("window.selectAndFit", node_ids)
 
     def expand_neighbors(self, node_id: str) -> None:
-        self._web.page().runJavaScript(f"window.expandNeighbors({node_id!r})")
+        """Pull the entity's neighborhood from the store and add it to the canvas.
+
+        Previously this only un-faded already-loaded elements; now it fetches
+        neighbors + incident links from the repository so expansion works when
+        the canvas holds a partial graph.
+        """
+        if self._repo is not None:
+            elements = self._repo.neighborhood(node_id)
+            self._run_js("window.addElements", elements, node_id)
+        self._run_js("window.expandNeighbors", node_id)
+
+    def set_degree_sizing(self, enabled: bool) -> None:
+        """Toggle conditional formatting: node size scaled by degree."""
+        self._run_js("window.setDegreeSizing", bool(enabled))
 
     def set_repo(self, repo: GraphRepository) -> None:
         self._repo = repo

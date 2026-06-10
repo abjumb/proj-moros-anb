@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 from pathlib import Path
 from typing import Optional
 
@@ -17,6 +18,7 @@ from ..graph.database import GraphDatabase
 from ..graph.models import Entity
 from ..graph.repository import GraphRepository
 from ..export.exporters import ExportFormat, write_export
+from ..importer.json_import import load_node_link_json
 from ..persistence import copy_case, RecentCases
 from ..viz.graph_view import GraphView
 from .import_dialog import ImportDialog
@@ -68,13 +70,14 @@ class EntityInspector(QWidget):
         self._entity_id = entity.id
         muted, mono = TOKENS["text_muted"], MONO_FONT_FAMILY
         lines = [
-            f"<b>{entity.label}</b>",
+            f"<b>{html.escape(entity.label)}</b>",
             f'<small style="color: {muted}">{entity.semantic_type.value.upper()}</small>',
         ]
         for k, v in entity.properties.items():
             lines.append(
-                f'<span style="color: {muted}">{k}</span>&nbsp; '
-                f'<span style="font-family: \'{mono}\', monospace; font-size: 12px">{v}</span>'
+                f'<span style="color: {muted}">{html.escape(str(k))}</span>&nbsp; '
+                f'<span style="font-family: \'{mono}\', monospace; font-size: 12px">'
+                f'{html.escape(str(v))}</span>'
             )
         self._title.setText("<br>".join(lines))
         self._expand_btn.setVisible(True)
@@ -135,6 +138,10 @@ class MainWindow(QMainWindow):
         open_act = QAction("&Open Case…", self)
         open_act.triggered.connect(self._open_case)
         file_menu.addAction(open_act)
+
+        import_json_act = QAction("Import &JSON…", self)
+        import_json_act.triggered.connect(self._import_json)
+        file_menu.addAction(import_json_act)
 
         save_act = QAction("&Save Case As…", self)
         save_act.triggered.connect(self._save_case_as)
@@ -260,6 +267,11 @@ class MainWindow(QMainWindow):
         clear_hl_act.triggered.connect(self._graph_view.clear_highlight)
         tb.addAction(clear_hl_act)
 
+        size_act = QAction("Size by Degree", self)
+        size_act.setCheckable(True)
+        size_act.toggled.connect(self._graph_view.set_degree_sizing)
+        tb.addAction(size_act)
+
         refresh_act = QAction("Refresh", self)
         refresh_act.triggered.connect(self._refresh_graph)
         tb.addAction(refresh_act)
@@ -326,10 +338,37 @@ class MainWindow(QMainWindow):
             self._graph_view.highlight_path(dlg.path)
             self._status.showMessage(f"Path found: {len(dlg.path)} nodes", 5000)
 
+    def _import_json(self) -> None:
+        path_str, _ = QFileDialog.getOpenFileName(
+            self, "Import node-link JSON", "", "JSON files (*.json);;All files (*)",
+        )
+        if not path_str:
+            return
+        try:
+            entities, links = load_node_link_json(path_str)
+        except Exception as exc:
+            QMessageBox.critical(self, "Import error", str(exc))
+            return
+        self._repo.entities.upsert_batch(entities)
+        self._repo.links.upsert_batch(links)
+        self._refresh_graph()
+        self._status.showMessage(
+            f"Imported {len(entities)} entities · {len(links)} links from JSON", 5000
+        )
+
     def _do_search(self) -> None:
+        """Search the repository (not just loaded elements) and locate matches."""
         query = self._search_edit.text().strip()
-        if query:
-            self._graph_view.search_and_locate(query)
+        if not query:
+            return
+        matches = self._repo.entities.search(query)
+        if matches:
+            self._graph_view.locate_nodes([e.id for e in matches])
+            self._status.showMessage(
+                f"{len(matches)} match{'es' if len(matches) != 1 else ''} for “{query}”", 5000
+            )
+        else:
+            self._status.showMessage(f"No matches for “{query}”", 5000)
 
     def _refresh_graph(self) -> None:
         self._graph_view.load_from_repo()

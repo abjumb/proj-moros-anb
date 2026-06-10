@@ -33,3 +33,21 @@ def test_find_path_no_connection(repo: GraphRepository):
     repo.entities.upsert(Entity(label="X", id="x"))
     repo.entities.upsert(Entity(label="Y", id="y"))
     assert repo.find_path("x", "y") == []
+
+
+def test_find_path_ignores_link_direction(repo: GraphRepository):
+    """Connectivity is undirected — a reverse-direction chain still connects."""
+    _chain(repo)
+    assert repo.find_path("d", "a") == ["d", "c", "b", "a"]
+
+
+def test_find_path_mixed_directions(repo: GraphRepository):
+    repo.entities.upsert_batch([
+        Entity(label=n, id=i) for i, n in [("x", "X"), ("y", "Y"), ("z", "Z")]
+    ])
+    # x -> y <- z : no directed path x..z, but an undirected one exists.
+    repo.links.upsert_batch([
+        Link(source_id="x", target_id="y", id="xy"),
+        Link(source_id="z", target_id="y", id="zy"),
+    ])
+    assert repo.find_path("x", "z") == ["x", "y", "z"]

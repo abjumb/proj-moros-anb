@@ -39,11 +39,12 @@ def _center_line(color: str, horizontal: bool) -> str:
     shrinking the draggable hit target to 1px.
     """
     x2, y2 = ("1", "0") if horizontal else ("0", "1")
+    # Qt mangles gradients with duplicate stop positions; keep an epsilon gap.
     return (
         f"qlineargradient(x1: 0, y1: 0, x2: {x2}, y2: {y2},"
-        f" stop: 0 transparent, stop: 0.4 transparent,"
-        f" stop: 0.4 {color}, stop: 0.6 {color},"
-        f" stop: 0.6 transparent, stop: 1 transparent)"
+        f" stop: 0 transparent, stop: 0.399 transparent,"
+        f" stop: 0.401 {color}, stop: 0.599 {color},"
+        f" stop: 0.601 transparent, stop: 1 transparent)"
     )
 
 
@@ -283,27 +284,41 @@ EntityInspector {{
 }}
 
 /* ── Splitters & separators ───────────────────────────────────────── */
+/* :horizontal = vertical bar between side-by-side panes (Qt convention). */
 QSplitter::handle:horizontal {{
     width: 5px;
-    background: {_center_line(TOKENS["border"], horizontal=True)};
+    background: {_center_line(t["border"], horizontal=True)};
 }}
 QSplitter::handle:vertical {{
     height: 5px;
-    background: {_center_line(TOKENS["border"], horizontal=False)};
+    background: {_center_line(t["border"], horizontal=False)};
 }}
 QSplitter::handle:horizontal:hover {{
-    background: {_center_line(TOKENS["accent"], horizontal=True)};
+    background: {_center_line(t["accent"], horizontal=True)};
 }}
 QSplitter::handle:vertical:hover {{
-    background: {_center_line(TOKENS["accent"], horizontal=False)};
+    background: {_center_line(t["accent"], horizontal=False)};
 }}
+/* Unlike QSplitter, dock separators take VISUAL-orientation pseudo-states
+   (verified on Qt 6.11: a tall right-dock bar matches :vertical), so the
+   cross-axis gradient goes on the matching orientation; the base rule covers
+   styles that report no orientation at all. */
 QMainWindow::separator {{
     width: 5px;
     height: 5px;
-    background: {_center_line(TOKENS["border"], horizontal=True)};
+    background: {_center_line(t["border"], horizontal=True)};
 }}
-QMainWindow::separator:hover {{
-    background: {_center_line(TOKENS["accent"], horizontal=True)};
+QMainWindow::separator:vertical {{
+    background: {_center_line(t["border"], horizontal=True)};
+}}
+QMainWindow::separator:horizontal {{
+    background: {_center_line(t["border"], horizontal=False)};
+}}
+QMainWindow::separator:vertical:hover {{
+    background: {_center_line(t["accent"], horizontal=True)};
+}}
+QMainWindow::separator:horizontal:hover {{
+    background: {_center_line(t["accent"], horizontal=False)};
 }}
 
 /* ── Status bar ───────────────────────────────────────────────────── */

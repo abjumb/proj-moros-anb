@@ -180,3 +180,65 @@ def test_link_undirected(repo, alice, bob):
     repo.links.upsert(link)
     links = repo.links.all()
     assert links[0].direction == LinkDirection.UNDIRECTED
+
+
+# ── Batch upserts, search, and incremental-expand support ─────────────
+
+def test_entity_search_case_insensitive(repo, alice):
+    assert [e.label for e in repo.entities.search("aLiC")] == ["Alice"]
+
+
+def test_entity_all_ids(repo, alice, bob):
+    assert repo.entities.all_ids() == {alice.id, bob.id}
+
+
+def test_entity_upsert_batch_bulk(repo):
+    batch = [Entity(label=f"E{i}", id=f"e{i}") for i in range(50)]
+    repo.entities.upsert_batch(batch)
+    assert repo.entities.count() == 50
+    # Re-running the same batch updates rather than duplicates.
+    repo.entities.upsert_batch(batch)
+    assert repo.entities.count() == 50
+
+
+def test_entity_upsert_batch_empty_noop(repo):
+    repo.entities.upsert_batch([])
+    assert repo.entities.count() == 0
+
+
+def test_link_upsert_batch_bulk_and_idempotent(repo):
+    repo.entities.upsert_batch([Entity(label=f"E{i}", id=f"e{i}") for i in range(10)])
+    links = [
+        Link(source_id=f"e{i}", target_id=f"e{i+1}", id=f"l{i}")
+        for i in range(9)
+    ]
+    repo.links.upsert_batch(links)
+    assert repo.links.count() == 9
+    repo.links.upsert_batch(links)  # same ids — skipped, not duplicated
+    assert repo.links.count() == 9
+
+
+def test_link_upsert_batch_missing_endpoint_dropped(repo, alice):
+    repo.links.upsert_batch([
+        Link(source_id=alice.id, target_id="ghost-id", id="lg"),
+    ])
+    assert repo.links.count() == 0
+
+
+def test_link_for_entity_preserves_direction(repo, alice, bob):
+    repo.links.upsert(Link(source_id=bob.id, target_id=alice.id, link_type="manages"))
+    links = repo.links.for_entity(alice.id)
+    assert len(links) == 1
+    # Alice is the *target* of the incoming link — direction must survive.
+    assert links[0].source_id == bob.id
+    assert links[0].target_id == alice.id
+
+
+def test_neighborhood_payload(repo, alice, bob, acme):
+    repo.links.upsert(Link(source_id=alice.id, target_id=bob.id, id="l1"))
+    repo.links.upsert(Link(source_id=acme.id, target_id=alice.id, id="l2"))
+    payload = repo.neighborhood(alice.id)
+    node_ids = {n["data"]["id"] for n in payload["nodes"]}
+    edge_ids = {e["data"]["id"] for e in payload["edges"]}
+    assert node_ids == {bob.id, acme.id}
+    assert edge_ids == {"l1", "l2"}

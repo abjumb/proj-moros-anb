@@ -74,3 +74,19 @@ def test_xlsx_roundtrip(tmp_path: Path):
     assert ds.columns == ["name", "score"]
     assert len(ds.rows) == 2
     assert ds.rows[0]["name"] == "Alice"
+
+
+def test_type_inference_samples_across_whole_column(tmp_path):
+    """Spread sampling catches a column that turns non-numeric only late.
+
+    ('phone' is a plain string, not a pandas NA token like 'N/A', so it
+    survives dropna and reaches type inference.)
+    """
+    from mdiscovery.importer.ingestion import IngestionService
+    rows = ["value"] + [str(i) for i in range(600)] + ["phone"] * 600
+    p = tmp_path / "late_mixed.csv"
+    p.write_text("\n".join(rows) + "\n")
+    ds = IngestionService().load(p)
+    # Trailing non-numeric values influence the inferred type even though the
+    # head of the column is purely numeric.
+    assert ds.column_types["value"] == "mixed"
