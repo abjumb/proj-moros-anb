@@ -31,6 +31,7 @@ class PythonBridge(QObject):
     nodeDoubleClickedSignal = pyqtSignal(str)
     backgroundTappedSignal = pyqtSignal()
     linkRenamedSignal = pyqtSignal(str, str)
+    nodesMovedSignal = pyqtSignal(str)
     viewReadySignal = pyqtSignal()
 
     @pyqtSlot(str)
@@ -48,6 +49,10 @@ class PythonBridge(QObject):
     @pyqtSlot(str, str)
     def linkRenamed(self, link_id: str, new_label: str) -> None:
         self.linkRenamedSignal.emit(link_id, new_label)
+
+    @pyqtSlot(str)
+    def nodesMoved(self, payload_json: str) -> None:
+        self.nodesMovedSignal.emit(payload_json)
 
     @pyqtSlot()
     def viewReady(self) -> None:
@@ -82,6 +87,7 @@ class GraphView(QWidget):
         self._bridge.nodeDoubleClickedSignal.connect(self.nodeDoubleClicked)
         self._bridge.backgroundTappedSignal.connect(self.backgroundTapped)
         self._bridge.linkRenamedSignal.connect(self._on_link_renamed)
+        self._bridge.nodesMovedSignal.connect(self._on_nodes_moved)
         self._bridge.viewReadySignal.connect(self._on_view_ready)
         self._web.loadFinished.connect(self._on_load_finished)
 
@@ -122,6 +128,42 @@ class GraphView(QWidget):
         """Persist a canvas-side link rename (the edge label is the link type)."""
         if self._repo is not None:
             self._repo.links.update_fields(link_id, link_type=new_label)
+
+    def _on_nodes_moved(self, payload_json: str) -> None:
+        """Persist dragged node positions into each entity's style (x/y)."""
+        if self._repo is None:
+            return
+        try:
+            moves = json.loads(payload_json)
+        except ValueError:
+            return
+        entities = []
+        for move in moves:
+            entity = self._repo.entities.get(move.get("id", ""))
+            if entity is None:
+                continue
+            entity.style = dict(entity.style)
+            entity.style["x"] = round(float(move["x"]), 2)
+            entity.style["y"] = round(float(move["y"]), 2)
+            entities.append(entity)
+        if entities:
+            self._repo.entities.upsert_batch(entities)
+
+    def capture_positions(self, callback: Callable[[], None]) -> None:
+        """Pull every node's current position into the store, then call back.
+
+        Drag capture covers user-arranged nodes; this sweep also captures
+        coordinates produced by automatic layout runs (used before package
+        export so a never-touched chart still ships with its layout).
+        """
+        def on_positions(positions) -> None:
+            if positions and self._repo is not None:
+                payload = [{"id": nid, "x": p["x"], "y": p["y"]}
+                           for nid, p in positions.items()]
+                self._on_nodes_moved(json.dumps(payload))
+            callback()
+
+        self._web.page().runJavaScript("window.getNodePositions()", on_positions)
 
     def load_from_repo(self) -> None:
         if self._repo is None:

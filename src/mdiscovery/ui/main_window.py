@@ -22,8 +22,10 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from .. import casepack
 from ..graph.models import Entity
 from ..export.exporters import ExportFormat, to_json, write_export
+from ..importer.anx_import import load_anx
 from ..importer.json_import import load_node_link_json, parse_node_link_text
 from ..persistence import copy_case, RecentCases
 from . import theme
@@ -41,7 +43,10 @@ _EXPORT_FILTERS: dict[str, ExportFormat] = {
     "CSV node/edge pair (*.csv)": ExportFormat.CSV,
     "Node-link JSON (*.json)": ExportFormat.JSON,
     "Markdown report (*.md)": ExportFormat.REPORT,
+    "i2 Chart XML (*.anx)": ExportFormat.ANX,
 }
+
+_PACKAGE_FILTER = f"Case packages (*{casepack.EXTENSION});;All files (*)"
 
 _CASE_FILTER = "Case files (*.kuzu);;All files (*)"
 
@@ -173,6 +178,20 @@ class MainWindow(QMainWindow):
         import_json_act = QAction("Import &JSON…", self)
         import_json_act.triggered.connect(self._import_json)
         file_menu.addAction(import_json_act)
+
+        import_anx_act = QAction("Import i2 Chart (AN&X)…", self)
+        import_anx_act.triggered.connect(self._import_anx)
+        file_menu.addAction(import_anx_act)
+
+        file_menu.addSeparator()
+        export_pkg_act = QAction("Export Case &Package…", self)
+        export_pkg_act.triggered.connect(self._export_package)
+        file_menu.addAction(export_pkg_act)
+
+        import_pkg_act = QAction("Import Case Pac&kage…", self)
+        import_pkg_act.triggered.connect(self._import_package)
+        file_menu.addAction(import_pkg_act)
+        file_menu.addSeparator()
 
         save_act = QAction("&Save Case As…", self)
         save_act.triggered.connect(self._save_case_as)
@@ -622,6 +641,79 @@ class MainWindow(QMainWindow):
         self._refresh_graph()
         self._status.showMessage(
             f"Imported {len(entities)} entities · {len(links)} links from JSON", 5000
+        )
+
+    def _import_anx(self) -> None:
+        ws = self._active_ws
+        if ws is None:
+            return
+        path_str, _ = QFileDialog.getOpenFileName(
+            self, "Import i2 chart", "", "i2 Chart XML (*.anx *.xml);;All files (*)",
+        )
+        if not path_str:
+            return
+        try:
+            entities, links = load_anx(path_str)
+        except Exception as exc:
+            QMessageBox.critical(self, "Import error", str(exc))
+            return
+        ws.repo.entities.upsert_batch(entities)
+        ws.repo.links.upsert_batch(links)
+        self._refresh_graph()
+        self._status.showMessage(
+            f"Imported {len(entities)} entities · {len(links)} links from ANX", 5000
+        )
+
+    def _export_package(self) -> None:
+        ws = self._active_ws
+        if ws is None:
+            return
+        if ws.repo.entities.count() == 0:
+            QMessageBox.information(
+                self, "Nothing to package", "The graph is empty.")
+            return
+        path_str, _ = QFileDialog.getSaveFileName(
+            self, "Export case package",
+            ws.db_path.stem + casepack.EXTENSION, _PACKAGE_FILTER,
+        )
+        if not path_str:
+            return
+
+        def do_write() -> None:
+            if not self._ws_alive(ws):
+                return
+            try:
+                written = casepack.write_package(
+                    path_str, ws.repo.entities.all(), ws.repo.links.all())
+            except Exception as exc:
+                QMessageBox.critical(self, "Package export failed", str(exc))
+                return
+            self._status.showMessage(f"Exported package → {written.name}", 5000)
+
+        # Sweep current canvas coordinates into the store first, so charts
+        # arranged only by automatic layout still ship with their layout.
+        ws.graph_view.capture_positions(do_write)
+
+    def _import_package(self) -> None:
+        ws = self._active_ws
+        if ws is None:
+            return
+        path_str, _ = QFileDialog.getOpenFileName(
+            self, "Import case package", "", _PACKAGE_FILTER,
+        )
+        if not path_str:
+            return
+        try:
+            _manifest, entities, links = casepack.read_package(
+                path_str, media_dir=ws.media_dir)
+        except Exception as exc:
+            QMessageBox.critical(self, "Package import failed", str(exc))
+            return
+        ws.repo.entities.upsert_batch(entities)
+        ws.repo.links.upsert_batch(links)
+        self._refresh_graph()
+        self._status.showMessage(
+            f"Imported package: {len(entities)} entities · {len(links)} links", 5000
         )
 
     def _open_export(self) -> None:
