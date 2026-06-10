@@ -401,7 +401,8 @@ class ImportDialog(QDialog):
         buttons = QDialogButtonBox()
         self._preview_btn = QPushButton("Preview")
         self._commit_btn = QPushButton("Import")
-        self._commit_btn.setEnabled(False)
+        # Import is always available: it re-validates the file/mapping itself,
+        # so Preview is an optional dry-run, not a required first step.
         cancel_btn = QPushButton("Cancel")
 
         buttons.addButton(self._preview_btn, QDialogButtonBox.ButtonRole.ActionRole)
@@ -429,7 +430,6 @@ class ImportDialog(QDialog):
             preview = self._pipeline.preview(dataset, mapping)
             self._last_preview = preview
             self._show_preview(preview)
-            self._commit_btn.setEnabled(True)
         except Exception as exc:
             QMessageBox.critical(self, "Preview error", str(exc))
 
@@ -447,10 +447,25 @@ class ImportDialog(QDialog):
         tab = self._active_tab()
         dataset = tab.dataset
         mapping = tab.build_mapping()
-        if dataset is None or mapping is None:
+        if dataset is None:
+            QMessageBox.warning(
+                self, "No file",
+                "Choose a CSV or XLSX file with “Browse…” before importing.")
+            return
+        if mapping is None or not mapping.column_mappings:
+            QMessageBox.warning(
+                self, "Nothing to import",
+                "Map at least one column (e.g. a label column in Simple mode, "
+                "or source/target columns in Advanced mode) before importing.")
             return
         try:
             result = self._pipeline.commit(dataset, mapping)
+            if result.entity_count == 0 and result.link_count == 0:
+                QMessageBox.warning(
+                    self, "Nothing imported",
+                    "No rows produced entities or links — check that the mapped "
+                    "columns contain values.")
+                return
             QMessageBox.information(
                 self, "Import complete",
                 f"Imported {result.entity_count} entities and {result.link_count} links."
