@@ -3,15 +3,23 @@
 from .metrics import (
     DegreeStats,
     GraphSummary,
-    degree_centrality,
+    betweenness_centrality,
+    closeness_centrality,
     connected_components,
+    degree_centrality,
+    eigenvector_centrality,
     graph_summary,
+    label_propagation_communities,
 )
 
 __all__ = [
     "DegreeStats",
     "GraphSummary",
-    "degree_centrality",
+    "betweenness_centrality",
+    "closeness_centrality",
     "connected_components",
+    "degree_centrality",
+    "eigenvector_centrality",
     "graph_summary",
+    "label_propagation_communities",
 ]

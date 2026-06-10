@@ -98,3 +98,96 @@ def test_density_empty_graph_is_zero():
     assert summary.density == 0.0
     assert summary.component_count == 0
     assert summary.largest_component_size == 0
+
+
+# ── Social network analysis ───────────────────────────────────────────
+
+from mdiscovery.analysis.metrics import (
+    betweenness_centrality,
+    closeness_centrality,
+    eigenvector_centrality,
+    label_propagation_communities,
+)
+
+
+def _path_graph():
+    """a — b — c — d — e (directed chain; SNA treats it as undirected)."""
+    entities = [Entity(label=i.upper(), id=i) for i in "abcde"]
+    links = [
+        Link(source_id=s, target_id=t, id=f"{s}{t}")
+        for s, t in [("a", "b"), ("b", "c"), ("c", "d"), ("d", "e")]
+    ]
+    return entities, links
+
+
+def test_betweenness_path_graph_center_highest():
+    entities, links = _path_graph()
+    bc = betweenness_centrality(entities, links)
+    assert bc["c"] > bc["b"] > bc["a"]
+    assert bc["a"] == 0.0 and bc["e"] == 0.0
+    # Center of a 5-path lies on 4 of the 6 pairs: 4/6 normalized.
+    assert abs(bc["c"] - 4 / 6) < 1e-9
+
+
+def test_betweenness_star_center_is_one():
+    entities, links = _star()
+    bc = betweenness_centrality(entities, links)
+    assert abs(bc["h"] - 1.0) < 1e-9
+    assert all(bc[i] == 0.0 for i in ("a", "b", "c"))
+
+
+def test_closeness_star():
+    entities, links = _star()
+    cc = closeness_centrality(entities, links)
+    assert abs(cc["h"] - 1.0) < 1e-9          # center reaches all in 1 hop
+    assert abs(cc["a"] - 0.6) < 1e-9          # (3/3) * (3/5)
+    isolated = entities + [Entity(label="Z", id="z")]
+    assert closeness_centrality(isolated, links)["z"] == 0.0
+
+
+def test_eigenvector_star_center_max():
+    entities, links = _star()
+    ec = eigenvector_centrality(entities, links)
+    assert abs(ec["h"] - 1.0) < 1e-6
+    assert all(ec[i] < 1.0 for i in ("a", "b", "c"))
+
+
+def test_eigenvector_no_edges_all_zero():
+    entities = [Entity(label="A", id="a"), Entity(label="B", id="b")]
+    ec = eigenvector_centrality(entities, [])
+    assert ec == {"a": 0.0, "b": 0.0}
+
+
+def test_communities_disconnected_triangles():
+    entities = [Entity(label=i.upper(), id=i) for i in "abcdefg"]
+    tri = lambda x, y, z: [
+        Link(source_id=x, target_id=y, id=x + y),
+        Link(source_id=y, target_id=z, id=y + z),
+        Link(source_id=z, target_id=x, id=z + x),
+    ]
+    links = tri("a", "b", "c") + tri("d", "e", "f")  # 'g' stays isolated
+    comms = label_propagation_communities(entities, links)
+    assert {frozenset(c) for c in comms} == {
+        frozenset({"a", "b", "c"}), frozenset({"d", "e", "f"}), frozenset({"g"}),
+    }
+    assert len(comms[0]) >= len(comms[-1])  # sorted by size desc
+
+
+def test_communities_deterministic():
+    entities, links = _path_graph()
+    runs = [label_propagation_communities(entities, links) for _ in range(3)]
+    assert runs[0] == runs[1] == runs[2]
+
+
+def test_betweenness_sampled_matches_exact_at_full_size():
+    entities, links = _path_graph()
+    exact = betweenness_centrality(entities, links)
+    sampled = betweenness_centrality(entities, links, sample_size=len(entities))
+    assert sampled == exact
+
+
+def test_betweenness_sampled_preserves_ranking():
+    # Star graph: any source sample still ranks the hub far above leaves.
+    entities, links = _star()
+    sampled = betweenness_centrality(entities, links, sample_size=2, seed=7)
+    assert sampled["h"] >= max(sampled[i] for i in ("a", "b", "c"))
