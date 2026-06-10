@@ -4,23 +4,24 @@
 <meta charset="UTF-8">
 <title>mDiscovery Graph</title>
 <style>
+  /* Darcula tokens — keep in sync with src/mdiscovery/ui/theme.py TOKENS. */
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: #0d1117; overflow: hidden; }
+  body { background: #1E1F22; overflow: hidden; }
   #cy { width: 100vw; height: 100vh; }
   #tooltip {
     position: fixed;
-    background: rgba(22,27,34,0.95);
-    border: 1px solid #30363d;
-    border-radius: 6px;
+    background: rgba(43,45,48,0.96);
+    border: 1px solid #393B40;
+    border-radius: 4px;
     padding: 8px 12px;
-    color: #c9d1d9;
-    font: 12px/1.5 'Segoe UI', system-ui, sans-serif;
+    color: #DFE1E5;
+    font: 12px/1.5 'Inter', 'Segoe UI', system-ui, sans-serif;
     pointer-events: none;
     display: none;
     z-index: 9999;
     max-width: 260px;
   }
-  #tooltip .type { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: .05em; }
+  #tooltip .type { font-size: 10px; color: #6F737A; text-transform: uppercase; letter-spacing: .05em; }
 </style>
 <script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
 <script src="qwebchannel.js"></script>
@@ -29,18 +30,18 @@
 <div id="cy"></div>
 <div id="tooltip"></div>
 <script>
-// AS-31: Semantic type colour palette (dark-theme)
+// AS-31: Semantic type colour palette (Darcula-tuned — same hue per type as before)
 const TYPE_COLORS = {
-  Person:       { bg: '#1a4731', border: '#3fb950' },
-  Organization: { bg: '#2d1e5e', border: '#8b5cf6' },
-  Location:     { bg: '#0d2d45', border: '#58a6ff' },
-  Event:        { bg: '#4a1c1c', border: '#f85149' },
-  Document:     { bg: '#3d3000', border: '#e3b341' },
-  Vehicle:      { bg: '#1e2d3d', border: '#79c0ff' },
-  Phone:        { bg: '#1d3a2a', border: '#56d364' },
-  Email:        { bg: '#3a1d3a', border: '#d2a8ff' },
-  Account:      { bg: '#2a2a0d', border: '#f0e68c' },
-  Unknown:      { bg: '#1c1c1c', border: '#6e7681' },
+  Person:       { bg: '#253627', border: '#57965C' },
+  Organization: { bg: '#2F2936', border: '#955AE0' },
+  Location:     { bg: '#25324D', border: '#548AF7' },
+  Event:        { bg: '#402929', border: '#DB5C5C' },
+  Document:     { bg: '#3D3223', border: '#F2C55C' },
+  Vehicle:      { bg: '#233838', border: '#43B1B1' },
+  Phone:        { bg: '#273428', border: '#6AAB73' },
+  Email:        { bg: '#362B39', border: '#C57FDB' },
+  Account:      { bg: '#363023', border: '#D5B26C' },
+  Unknown:      { bg: '#2B2D30', border: '#6F737A' },
 };
 
 function nodeColor(type) {
@@ -60,7 +61,8 @@ const cy = cytoscape({
         'border-color': ele => nodeBorder(ele.data('type')),
         'border-width': 2,
         'label': 'data(label)',
-        'color': '#c9d1d9',
+        'color': '#DFE1E5',
+        'font-family': 'Inter, sans-serif',
         'font-size': 11,
         'text-valign': 'center',
         'text-halign': 'center',
@@ -81,18 +83,26 @@ const cy = cytoscape({
     },
     {
       selector: 'node:selected',
-      style: { 'border-width': 4, 'border-color': '#f0c040', 'z-index': 999 }
+      style: {
+        'border-width': 3,
+        'border-color': '#3574F0',
+        'overlay-color': '#3574F0',
+        'overlay-opacity': 0.15,
+        'overlay-padding': 5,
+        'z-index': 999,
+      }
     },
     {
       selector: 'edge',
       style: {
         'width': ele => Math.max(1, (ele.data('strength') || 1) * 2),
-        'line-color': '#30363d',
-        'target-arrow-color': '#58a6ff',
+        'line-color': '#393B40',
+        'target-arrow-color': '#6F737A',
         'curve-style': 'bezier',
         'label': 'data(type)',
+        'font-family': 'Inter, sans-serif',
         'font-size': 9,
-        'color': '#8b949e',
+        'color': '#6F737A',
         'text-rotation': 'autorotate',
       }
     },
@@ -109,16 +119,22 @@ const cy = cytoscape({
       style: {
         'target-arrow-shape': 'triangle',
         'source-arrow-shape': 'triangle',
-        'source-arrow-color': '#58a6ff',
+        'source-arrow-color': '#6F737A',
       }
     },
     {
       selector: 'edge:selected',
-      style: { 'line-color': '#f0c040', 'target-arrow-color': '#f0c040' }
+      style: { 'line-color': '#3574F0', 'target-arrow-color': '#3574F0' }
     },
     {
       selector: '.highlighted',
-      style: { 'border-color': '#ff9500', 'border-width': 4 }
+      style: {
+        'border-color': '#3574F0',
+        'border-width': 3,
+        'overlay-color': '#3574F0',
+        'overlay-opacity': 0.15,
+        'overlay-padding': 5,
+      }
     },
     {
       selector: '.faded',

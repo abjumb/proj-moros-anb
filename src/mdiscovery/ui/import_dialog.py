@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QLabel,
     QComboBox, QLineEdit, QPushButton, QSizePolicy, QSplitter,
@@ -37,6 +38,13 @@ ROLE_OPTIONS = [
 ]
 
 STYPE_OPTIONS = [(s.value, s.value) for s in SemanticType]
+
+# Mapped-column highlight tints (IntelliJ diff-style: readable under #DFE1E5 text).
+ROLE_HIGHLIGHTS = {
+    "entity_label": QColor("#294436"),  # green — label column
+    "link_source":  QColor("#2E4366"),  # blue — link source
+    "link_target":  QColor("#3D2E4F"),  # purple — link target
+}
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -159,7 +167,7 @@ class SimpleModeTab(QWidget):
                 val = row.get(col)
                 item = QTableWidgetItem(str(val) if val is not None else "")
                 if c_idx == label_idx:
-                    item.setBackground(Qt.GlobalColor.darkGreen)
+                    item.setBackground(ROLE_HIGHLIGHTS["entity_label"])
                 self._preview_table.setItem(r_idx, c_idx, item)
 
         self._preview_table.resizeColumnsToContents()
@@ -320,19 +328,13 @@ class AdvancedModeTab(QWidget):
 
         role_map = {r.col_name: r.get_mapping().role for r in self._col_rows}
 
-        ROLE_COLORS = {
-            "entity_label": Qt.GlobalColor.darkGreen,
-            "link_source":  Qt.GlobalColor.darkBlue,
-            "link_target":  Qt.GlobalColor.darkMagenta,
-        }
-
         for r_idx, row in enumerate(rows):
             for c_idx, col in enumerate(cols):
                 val = row.get(col)
                 item = QTableWidgetItem(str(val) if val is not None else "")
                 role = role_map.get(col, "skip")
-                if role in ROLE_COLORS:
-                    item.setBackground(ROLE_COLORS[role])
+                if role in ROLE_HIGHLIGHTS:
+                    item.setBackground(ROLE_HIGHLIGHTS[role])
                 self._preview_table.setItem(r_idx, c_idx, item)
 
         self._preview_table.resizeColumnsToContents()

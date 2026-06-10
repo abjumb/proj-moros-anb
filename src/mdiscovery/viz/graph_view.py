@@ -27,6 +27,7 @@ class PythonBridge(QObject):
 
     nodeSelectedSignal = pyqtSignal(str)
     backgroundTappedSignal = pyqtSignal()
+    viewReadySignal = pyqtSignal()
 
     @pyqtSlot(str)
     def nodeSelected(self, node_id: str) -> None:
@@ -38,7 +39,7 @@ class PythonBridge(QObject):
 
     @pyqtSlot()
     def viewReady(self) -> None:
-        pass
+        self.viewReadySignal.emit()
 
 
 class GraphView(QWidget):
@@ -66,7 +67,7 @@ class GraphView(QWidget):
 
         self._bridge.nodeSelectedSignal.connect(self.nodeSelected)
         self._bridge.backgroundTappedSignal.connect(self.backgroundTapped)
-        self._bridge.viewReady.connect(self._on_view_ready)
+        self._bridge.viewReadySignal.connect(self._on_view_ready)
         self._web.loadFinished.connect(self._on_load_finished)
 
         self._load_html()
@@ -76,7 +77,7 @@ class GraphView(QWidget):
         if html_path.exists():
             self._web.setUrl(QUrl.fromLocalFile(str(html_path)))
         else:
-            self._web.setHtml("<body style='background:#0d1117;color:#c9d1d9'>graph.html not found</body>")
+            self._web.setHtml("<body style='background:#1E1F22;color:#DFE1E5'>graph.html not found</body>")
 
     def _on_load_finished(self, ok: bool) -> None:
         if not ok:
