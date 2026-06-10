@@ -339,6 +339,20 @@ cy.on('dragfree', 'node', evt => {
   });
 });
 
+// ── Layout persistence ──────────────────────────────────────────────────
+// Registered AFTER the snap handler so captured coordinates are post-snap.
+// Python stores them in each entity's style, so arrangements survive
+// reloads, package export, and copy/paste.
+cy.on('dragfree', 'node', evt => {
+  const moved = evt.target;
+  const targets = moved.selected() ? cy.$('node:selected') : moved;
+  const payload = targets.map(n => {
+    const p = n.position();
+    return { id: n.id(), x: p.x, y: p.y };
+  });
+  if (pybridge && pybridge.nodesMoved) pybridge.nodesMoved(JSON.stringify(payload));
+});
+
 // ── Python bridge via QWebChannel ──────────────────────────────────────
 let pybridge = null;
 
@@ -368,9 +382,30 @@ cy.on('tap', evt => {
 window.loadGraph = function(jsonStr) {
   const data = (typeof jsonStr === 'string') ? JSON.parse(jsonStr) : jsonStr;
   cy.elements().remove();
-  cy.add(data.nodes || []);
+  const nodes = data.nodes || [];
+  cy.add(nodes);            // cy.add applies any element.position presets
   cy.add(data.edges || []);
-  window.applyLayout('cose');
+  const positioned = nodes.filter(n => n.position).length;
+  if (nodes.length === 0 || positioned === 0) {
+    window.applyLayout('cose');
+    return;
+  }
+  // Saved layout: keep preset coordinates. Nodes without a stored position
+  // (added since the last arrangement) would stack at the origin — line
+  // them up in a column right of the arranged chart instead.
+  if (positioned < nodes.length) {
+    const arranged = cy.nodes().filter(n =>
+      nodes.some(d => d.position && d.data.id === n.id()));
+    const bb = arranged.boundingBox();
+    let row = 0;
+    cy.nodes().forEach(n => {
+      if (!nodes.some(d => d.position && d.data.id === n.id())) {
+        n.position({ x: bb.x2 + 140, y: bb.y1 + row * 90 });
+        row += 1;
+      }
+    });
+  }
+  cy.fit(undefined, 60);
 };
 
 window.applyLayout = function(name) {
@@ -423,6 +458,7 @@ window.addElements = function(data, anchorId) {
 
   const newNodes = (d.nodes || []).filter(n => cy.$id(n.data.id).empty());
   newNodes.forEach((n, i) => {
+    if (n.position) return;  // saved layout coordinates win over the ring
     const angle = (2 * Math.PI * i) / Math.max(newNodes.length, 1);
     n.position = {
       x: base.x + 130 * Math.cos(angle),
@@ -478,6 +514,14 @@ window.setGridSnap = function(enabled, step) {
 
 window.getSelectedNodes = function() {
   return cy.$('node:selected').map(n => n.id());
+};
+
+window.getNodePositions = function() {
+  // {id: {x, y}} for every node — pulled before package export so layouts
+  // produced by automatic layout runs (never dragged) are captured too.
+  const out = {};
+  cy.nodes().forEach(n => { const p = n.position(); out[n.id()] = { x: p.x, y: p.y }; });
+  return out;
 };
 
 window.updateNodeData = function(id, data, replace) {

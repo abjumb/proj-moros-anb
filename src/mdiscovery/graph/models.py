@@ -115,7 +115,13 @@ class Entity:
             data["_size"] = self.style["size"]
         if self.style.get("font_size"):
             data["_fontSize"] = self.style["font_size"]
-        return {"data": data}
+        element: dict = {"data": data}
+        # Saved layout: style x/y become a Cytoscape position preset, so
+        # arrangements survive reloads, package export, and copy/paste.
+        if "x" in self.style and "y" in self.style:
+            element["position"] = {"x": float(self.style["x"]),
+                                   "y": float(self.style["y"])}
+        return element
 
 
 @dataclass

@@ -33,6 +33,7 @@ class ExportFormat(str, Enum):
     CSV = "csv"
     JSON = "json"
     REPORT = "report"
+    ANX = "anx"
 
     @property
     def suffix(self) -> str:
@@ -41,6 +42,7 @@ class ExportFormat(str, Enum):
             ExportFormat.CSV: ".csv",
             ExportFormat.JSON: ".json",
             ExportFormat.REPORT: ".md",
+            ExportFormat.ANX: ".anx",
         }[self]
 
 
@@ -288,6 +290,11 @@ def write_export(repo, path: str | Path, fmt: ExportFormat | str) -> list[Path]:
             to_report(entities, links, generated_at=datetime.now()),
             encoding="utf-8",
         )
+        return [path]
+
+    if fmt is ExportFormat.ANX:
+        from .anx import to_anx  # local import keeps the module table here
+        path.write_text(to_anx(entities, links), encoding="utf-8")
         return [path]
 
     if fmt is ExportFormat.CSV:

@@ -14,9 +14,12 @@ analyze, and export. All on-device: embedded Kuzu graph DB, PyQt6 UI, no servers
 src/mdiscovery/
   app.py            entry point (mdiscovery console script → main())
   graph/            data layer — models, Kuzu database, repository facade
-  importer/         ingestion (CSV/XLSX/JSON) + preview→commit pipeline
+  importer/         ingestion (CSV/XLSX/JSON/ANX) + preview→commit pipeline
+  casepack.py       .onb case package — portable zip document (manifest,
+                    graph+layout, media); the Kuzu file stays the working store
   icons.py          entity icon registry (assets/icons SVGs, theme-recolored)
   analysis/         metrics: degree centrality, connected components, summary
+  export/           serializers: GraphML, CSV, JSON, Markdown report, ANX
   export/           serializers: GraphML, CSV, JSON, Markdown report
   viz/              GraphView — PyQt6 WebEngine ↔ Cytoscape.js bridge
   ui/               MainWindow, Workspace panes, EntityInspector, dialogs
@@ -71,3 +74,10 @@ coverage that doesn't exist.
 - Dossier metadata (description, source, the i2 grading trio, timestamps) is
   stored in conventional entity property keys (`ui/dossier.py::METADATA_KEYS`);
   per-entity display attributes (size, font, photo) live in `Entity.style`.
+- Saved layouts: node coordinates persist as `Entity.style` x/y (captured on
+  drag via the `nodesMoved` bridge; swept via `capture_positions` before
+  package export). `to_cytoscape()` emits them as position presets, so
+  arrangements survive reload, export, and copy/paste automatically.
+- ANX import/export targets the publicly known i2 chart-XML shape and is
+  validated by round-trip only — verify against real Analyst's Notebook
+  output (reference .anx files) before claiming interop fidelity.
