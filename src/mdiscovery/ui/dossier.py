@@ -12,6 +12,7 @@ and round-trips through the node-link JSON format.
 from __future__ import annotations
 
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -24,10 +25,9 @@ from PyQt6.QtWidgets import (
     QSlider, QVBoxLayout, QWidget,
 )
 
-from ..graph.models import Entity, SemanticType
+from ..graph.models import Entity, SemanticType, merge_edited_properties
 from ..graph.repository import GraphRepository
-from .entity_dialog import _icon_combo, _type_combo
-from .widgets import PropertiesTable
+from .widgets import PropertiesTable, icon_combo, type_combo
 
 # Property keys the dossier surfaces as dedicated fields (everything else
 # appears in the free properties table).
@@ -70,8 +70,8 @@ class DossierDialog(QDialog):
 
         identity = QFormLayout()
         self._label_edit = QLineEdit(entity.label)
-        self._type_combo = _type_combo(entity.semantic_type)
-        self._icon_combo = _icon_combo(entity.icon)
+        self._type_combo = type_combo(entity.semantic_type)
+        self._icon_combo = icon_combo(entity.icon)
         identity.addRow("Label:", self._label_edit)
         identity.addRow("Type:", self._type_combo)
         identity.addRow("Icon:", self._icon_combo)
@@ -184,7 +184,11 @@ class DossierDialog(QDialog):
             return
         source = Path(path_str)
         self._media_dir.mkdir(parents=True, exist_ok=True)
-        dest = self._media_dir / f"{self._entity.id}{source.suffix.lower()}"
+        # Timestamped name: replacing a photo must change the path, or the
+        # canvas (same file:// URI + renderer image cache) keeps the old image.
+        dest = self._media_dir / (
+            f"{self._entity.id}-{int(time.time())}{source.suffix.lower()}"
+        )
         try:
             shutil.copy2(source, dest)
         except OSError as exc:
@@ -215,7 +219,9 @@ class DossierDialog(QDialog):
         entity.semantic_type = SemanticType(self._type_combo.currentData())
         entity.icon = self._icon_combo.currentData() or ""
 
-        properties = self._props.properties()
+        # Preserve original value types for untouched rows — the table
+        # round-trips everything as text.
+        properties = merge_edited_properties(entity.properties, self._props.properties())
         now = datetime.now().isoformat(timespec="seconds")
         meta = {
             "description": self._description.toPlainText().strip(),

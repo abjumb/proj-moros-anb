@@ -27,6 +27,32 @@ class LinkDirection(str, Enum):
     BIDIRECTIONAL = "bidirectional"
 
 
+# Canvas data fields with rendering semantics. User properties with these
+# names are kept in the model/exports but are NOT spread into Cytoscape data,
+# where they would be misread as image URLs / sizes.
+# Keep in sync with INTERNAL_KEYS in assets/cytoscape/graph.html.
+RESERVED_DATA_KEYS = frozenset(
+    {"id", "label", "type", "icon", "photo", "_size", "_fontSize"}
+)
+
+
+def merge_edited_properties(original: dict, edited: dict) -> dict:
+    """Merge a string-valued edit (UI table) over typed original properties.
+
+    Property editors round-trip values as text; writing that text back
+    wholesale would silently stringify ints/floats/lists the user never
+    touched. Keep the original (typed) value wherever its string form is
+    unchanged; only genuinely edited values become strings.
+    """
+    merged: dict = {}
+    for key, value in edited.items():
+        if key in original and str(original[key]) == value:
+            merged[key] = original[key]
+        else:
+            merged[key] = value
+    return merged
+
+
 @dataclass
 class Entity:
     label: str
@@ -77,7 +103,8 @@ class Entity:
             "id": self.id,
             "label": self.label,
             "type": self.semantic_type.value,
-            **{k: str(v) for k, v in self.properties.items()},
+            **{k: str(v) for k, v in self.properties.items()
+               if k not in RESERVED_DATA_KEYS},
         }
         if self.icon:
             data["icon"] = self.icon

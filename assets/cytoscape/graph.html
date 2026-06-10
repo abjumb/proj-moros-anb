@@ -231,8 +231,11 @@ const STYLE = [
   }
 ];
 
-// Conditional formatting: node size scaled by degree (appended after the
-// type-specific rules so it overrides their fixed width/height).
+// Conditional formatting: node size scaled by degree. PRECEDENCE CONTRACT:
+// refreshStyle() appends this rule AFTER the base + type rules, so while the
+// toggle is on it deliberately overrides per-entity dossier sizes (_size) and
+// the type aspect ratios — same semantics as i2's conditional formatting.
+// Do not reorder the concat in refreshStyle() without revisiting this.
 const DEGREE_SIZING_RULE = {
   selector: 'node',
   style: {
@@ -262,6 +265,7 @@ function esc(s) {
 
 // ── Tooltip ────────────────────────────────────────────────────────────
 const tooltip = document.getElementById('tooltip');
+// Keep in sync with RESERVED_DATA_KEYS in src/mdiscovery/graph/models.py.
 const INTERNAL_KEYS = ['id', 'label', 'type', 'icon', 'photo', '_size', '_fontSize'];
 cy.on('mouseover', 'node', evt => {
   const d = evt.target.data();
@@ -305,13 +309,19 @@ function commitEdgeEdit() {
   }
   closeEdgeEditor();
 }
+// Click-away/pan/zoom COMMIT the edit (matching inline editors elsewhere —
+// silently discarding typed input reads as data loss); only Escape discards.
+let discardEdit = false;
 edgeEditor.addEventListener('keydown', e => {
   if (e.key === 'Enter') commitEdgeEdit();
-  else if (e.key === 'Escape') closeEdgeEditor();
+  else if (e.key === 'Escape') { discardEdit = true; closeEdgeEditor(); }
 });
-edgeEditor.addEventListener('blur', closeEdgeEditor);
+edgeEditor.addEventListener('blur', () => {
+  if (discardEdit) { discardEdit = false; closeEdgeEditor(); }
+  else commitEdgeEdit();
+});
 cy.on('tap', 'edge', evt => openEdgeEditor(evt.target, evt.renderedPosition));
-cy.on('pan zoom', closeEdgeEditor);
+cy.on('pan zoom', commitEdgeEdit);
 
 // ── Grid snap (vs free-flow movement) ──────────────────────────────────
 let gridSnap = false;
@@ -476,9 +486,10 @@ window.updateNodeData = function(id, data, replace) {
   const d = (typeof data === 'string') ? JSON.parse(data) : data;
   if (replace) {
     // Drop keys not present in the new payload (e.g. a removed photo or
-    // deleted property) — plain data() only merges.
-    const stale = Object.keys(node.data()).filter(k => k !== 'id' && !(k in d));
-    if (stale.length) node.removeData(stale.join(' '));
+    // deleted property). removeData(names) splits on whitespace, so keys
+    // containing spaces (user-defined property names) can't be removed
+    // individually — clear all mutable data and re-set instead.
+    node.removeData();
   }
   node.data(d);
   cy.style().update();

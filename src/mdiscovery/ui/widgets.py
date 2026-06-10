@@ -2,12 +2,69 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QHBoxLayout, QHeaderView, QPushButton, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QComboBox, QHBoxLayout, QHeaderView, QPushButton, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
+
+from ..graph.models import Entity, SemanticType
+from ..icons import ICONS
+
+AUTO_ICON_LABEL = "(default for type)"
+
+
+def type_combo(selected: SemanticType = SemanticType.UNKNOWN) -> QComboBox:
+    combo = QComboBox()
+    for stype in SemanticType:
+        combo.addItem(stype.value, stype.value)
+    combo.setCurrentIndex(combo.findData(selected.value))
+    return combo
+
+
+def icon_combo(selected: str = "") -> QComboBox:
+    combo = QComboBox()
+    combo.addItem(AUTO_ICON_LABEL, "")
+    for display, stem in ICONS.items():
+        combo.addItem(display, stem)
+    if selected:
+        index = combo.findData(selected)
+        if index >= 0:
+            combo.setCurrentIndex(index)
+    return combo
+
+
+class EntityPicker(QComboBox):
+    """Editable entity combo with type-ahead and safe typed-text resolution.
+
+    ``selected_id`` trusts ``currentIndex`` only while the visible text still
+    matches that row — an editable combo keeps its old index when the user
+    types over the selection, which previously resolved to the wrong entity.
+    """
+
+    def __init__(self, entities: Iterable[Entity],
+                 preselect_id: Optional[str] = None,
+                 parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setEditable(True)
+        self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.completer().setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        for entity in sorted(entities, key=lambda e: e.label.lower()):
+            self.addItem(f"{entity.label}  ·  {entity.semantic_type.value}", entity.id)
+        if preselect_id is not None:
+            self.setCurrentIndex(self.findData(preselect_id))
+        else:
+            self.setCurrentIndex(-1)
+
+    def selected_id(self) -> Optional[str]:
+        text = self.currentText().strip()
+        idx = self.currentIndex()
+        if idx >= 0 and self.itemText(idx).strip() == text:
+            return self.itemData(idx)
+        match = self.findText(text, Qt.MatchFlag.MatchFixedString)
+        return self.itemData(match) if match >= 0 else None
 
 
 class PropertiesTable(QWidget):

@@ -173,3 +173,31 @@ def test_clipboard_payload_roundtrip():
     assert by_id["a"].icon == "person-male"
     assert by_id["a"].style == {"size": 80}
     assert restored_l[0].link_type == "calls"
+
+
+# ── Code-review fixes ─────────────────────────────────────────────────
+
+def test_reserved_property_names_not_spread_into_canvas_data():
+    """A user property literally named 'photo'/'icon'/'_size' must not be
+    misread by the canvas as an image URL or size override."""
+    e = Entity(label="X", id="x",
+               properties={"photo": "IMG_0231.jpg", "_size": "huge", "ok": "v"})
+    data = e.to_cytoscape()["data"]
+    assert "photo" not in data and "_size" not in data
+    assert data["ok"] == "v"
+    # The properties themselves survive in the model and exports:
+    assert e.to_dict()["properties"]["photo"] == "IMG_0231.jpg"
+
+
+def test_merge_edited_properties_preserves_untouched_types():
+    from mdiscovery.graph.models import merge_edited_properties
+    original = {"age": 41, "score": 0.5, "tags": [1, 2], "name": "Bob"}
+    # Table round-trips everything as text; user only edited "name".
+    edited = {"age": "41", "score": "0.5", "tags": "[1, 2]", "name": "Robert"}
+    merged = merge_edited_properties(original, edited)
+    assert merged["age"] == 41 and isinstance(merged["age"], int)
+    assert merged["score"] == 0.5 and isinstance(merged["score"], float)
+    assert merged["tags"] == [1, 2]
+    assert merged["name"] == "Robert"
+    # Deletions and additions pass through:
+    assert merge_edited_properties({"gone": 1}, {"new": "x"}) == {"new": "x"}

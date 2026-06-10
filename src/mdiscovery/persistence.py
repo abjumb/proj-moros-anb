@@ -44,6 +44,18 @@ def copy_case(src: str | Path, dst: str | Path, *, overwrite: bool = False) -> P
             sidecar = src.with_name(src.name + suffix)
             if sidecar.exists():
                 shutil.copy2(sidecar, dst.with_name(dst.name + suffix))
+
+    # Dossier photos live beside the case in "<case>.media/" — a copy without
+    # them would lose every uploaded photo once the original case moves.
+    # (Entity photo paths are absolute, so entities in the copy keep pointing
+    # at the source media dir while it exists; the copied dir preserves the
+    # assets for relocation.)
+    media_src = src.with_name(src.name + ".media")
+    if media_src.is_dir():
+        media_dst = dst.with_name(dst.name + ".media")
+        if media_dst.exists():
+            _remove(media_dst)
+        shutil.copytree(media_src, media_dst)
     return dst
 
 

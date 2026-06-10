@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout,
     QGroupBox, QLineEdit, QVBoxLayout, QWidget,
@@ -16,30 +15,7 @@ from PyQt6.QtWidgets import (
 
 from ..graph.models import Entity, Link, LinkDirection, SemanticType
 from ..graph.repository import GraphRepository
-from ..icons import ICONS
-from .widgets import PropertiesTable
-
-_AUTO_ICON = "(default for type)"
-
-
-def _icon_combo(selected: str = "") -> QComboBox:
-    combo = QComboBox()
-    combo.addItem(_AUTO_ICON, "")
-    for display, stem in ICONS.items():
-        combo.addItem(display, stem)
-    if selected:
-        index = combo.findData(selected)
-        if index >= 0:
-            combo.setCurrentIndex(index)
-    return combo
-
-
-def _type_combo(selected: SemanticType = SemanticType.UNKNOWN) -> QComboBox:
-    combo = QComboBox()
-    for stype in SemanticType:
-        combo.addItem(stype.value, stype.value)
-    combo.setCurrentIndex(combo.findData(selected.value))
-    return combo
+from .widgets import EntityPicker, PropertiesTable, icon_combo, type_combo
 
 
 class EntityDialog(QDialog):
@@ -54,8 +30,8 @@ class EntityDialog(QDialog):
         layout = QVBoxLayout(self)
         form = QFormLayout()
         self._label_edit = QLineEdit(entity.label if entity else "")
-        self._type_combo = _type_combo(entity.semantic_type if entity else SemanticType.UNKNOWN)
-        self._icon_combo = _icon_combo(entity.icon if entity else "")
+        self._type_combo = type_combo(entity.semantic_type if entity else SemanticType.UNKNOWN)
+        self._icon_combo = icon_combo(entity.icon if entity else "")
         form.addRow("Label:", self._label_edit)
         form.addRow("Type:", self._type_combo)
         form.addRow("Icon:", self._icon_combo)
@@ -110,8 +86,9 @@ class LinkDialog(QDialog):
         layout = QVBoxLayout(self)
         form = QFormLayout()
 
-        self._source = self._entity_combo(source_id)
-        self._target = self._entity_combo(None)
+        entities = repo.entities.all()  # fetched once, shared by both pickers
+        self._source = EntityPicker(entities, preselect_id=source_id)
+        self._target = EntityPicker(entities)
         self._type_edit = QLineEdit("relates_to")
         self._direction = QComboBox()
         for direction in LinkDirection:
@@ -146,38 +123,16 @@ class LinkDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    def _entity_combo(self, preselect_id: Optional[str]) -> QComboBox:
-        combo = QComboBox()
-        combo.setEditable(True)
-        combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        combo.completer().setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        for entity in sorted(self._repo.entities.all(), key=lambda e: e.label.lower()):
-            combo.addItem(f"{entity.label}  ·  {entity.semantic_type.value}", entity.id)
-        if preselect_id is not None:
-            index = combo.findData(preselect_id)
-            combo.setCurrentIndex(index)
-        else:
-            combo.setCurrentIndex(-1)
-        return combo
-
-    def _selected_id(self, combo: QComboBox) -> Optional[str]:
-        idx = combo.currentIndex()
-        if idx >= 0:
-            return combo.itemData(idx)
-        match = combo.findText(combo.currentText().strip(),
-                               Qt.MatchFlag.MatchFixedString)
-        return combo.itemData(match) if match >= 0 else None
-
     def _on_accept(self) -> None:
-        src, tgt = self._selected_id(self._source), self._selected_id(self._target)
+        src, tgt = self._source.selected_id(), self._target.selected_id()
         if not src or not tgt or src == tgt:
             return
         self.accept()
 
     def result_link(self) -> Link:
         return Link(
-            source_id=self._selected_id(self._source),
-            target_id=self._selected_id(self._target),
+            source_id=self._source.selected_id(),
+            target_id=self._target.selected_id(),
             link_type=self._type_edit.text().strip() or "relates_to",
             direction=LinkDirection(self._direction.currentData()),
             strength=self._strength.value(),

@@ -17,7 +17,7 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
 
 from ..graph.repository import GraphRepository
-from ..icons import DEFAULT_TYPE_ICONS, load_icon_svgs
+from ..icons import DEFAULT_TYPE_ICONS, colored_svg, load_icon_svgs
 from ..ui import theme
 
 # graph_view.py lives at <root>/src/mdiscovery/viz/ — parents[3] is <root>.
@@ -148,10 +148,7 @@ class GraphView(QWidget):
         """Push the active palette and a re-colored icon library to the canvas."""
         self._run_js("window.setTheme", theme.canvas_theme())
         icon_color = theme.active_tokens()["text"]
-        svgs = {
-            stem: svg.replace("currentColor", icon_color)
-            for stem, svg in load_icon_svgs().items()
-        }
+        svgs = {stem: colored_svg(stem, icon_color) for stem in load_icon_svgs()}
         defaults = {st.value: stem for st, stem in DEFAULT_TYPE_ICONS.items()}
         self._run_js("window.setIconLibrary", svgs, defaults)
 
@@ -210,5 +207,6 @@ class GraphView(QWidget):
             "window.getSelectedNodes()", lambda ids: callback(ids or [])
         )
 
-    def set_repo(self, repo: GraphRepository) -> None:
+    def set_repo(self, repo: Optional[GraphRepository]) -> None:
+        """Bind a repository (or None to detach, e.g. while closing a case)."""
         self._repo = repo

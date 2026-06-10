@@ -32,6 +32,7 @@ from .entity_dialog import EntityDialog, LinkDialog
 from .find_path_dialog import FindPathDialog
 from .import_dialog import ImportDialog
 from .theme import MONO_FONT_FAMILY
+from .theming import apply_theme
 from .workspace import Workspace
 
 # QFileDialog name-filter label -> export format.
@@ -131,6 +132,20 @@ class MainWindow(QMainWindow):
         first = self._add_workspace(Path(db_path or DEFAULT_DB_PATH))
         self._set_active(first)
         self._rebuild_recent_menu()
+
+        # Any focus landing inside a workspace (canvas render widget, header)
+        # marks it active — covers pan/zoom/edge-tap gestures that produce no
+        # bridge signal, without poking WebEngine internals.
+        QApplication.instance().focusChanged.connect(self._on_focus_changed)
+
+    def _on_focus_changed(self, _old, new) -> None:
+        widget = new
+        while widget is not None:
+            if isinstance(widget, Workspace):
+                if widget in self._workspaces:
+                    self._set_active(widget)
+                return
+            widget = widget.parentWidget()
 
     # ── UI assembly ──────────────────────────────────────────────────
     def _build_ui(self) -> None:
@@ -294,7 +309,12 @@ class MainWindow(QMainWindow):
         ws.setParent(None)
         ws.deleteLater()
         self._update_close_buttons()
+        # The inspector may be showing an entity from the closed case even
+        # when that pane wasn't active.
+        self._inspector.clear()
+        self._rebuild_recent_menu()  # the closed case becomes re-openable
         if self._active_ws is ws:
+            self._active_ws = None
             self._set_active(self._workspaces[0])
 
     def _close_active_workspace(self) -> None:
@@ -304,7 +324,7 @@ class MainWindow(QMainWindow):
     def _update_close_buttons(self) -> None:
         many = len(self._workspaces) > 1
         for ws in self._workspaces:
-            ws._close_btn.setVisible(many)
+            ws.set_closable(many)
 
     def _set_active(self, ws: Workspace) -> None:
         if ws is self._active_ws:
@@ -317,7 +337,7 @@ class MainWindow(QMainWindow):
         self._grid_act.setChecked(ws.grid_snap)
         self._grid_act.blockSignals(False)
         self._size_act.blockSignals(True)
-        self._size_act.setChecked(getattr(ws, "degree_sizing", False))
+        self._size_act.setChecked(ws.degree_sizing)
         self._size_act.blockSignals(False)
         self._inspector.clear()
         self._update_title()
@@ -328,12 +348,21 @@ class MainWindow(QMainWindow):
             fn(self._active_ws)
 
     # ── Canvas event handlers ────────────────────────────────────────
+    # Liveness guard: bridge/JS events are asynchronous and can arrive after
+    # their workspace was closed; a closed pane's repo must not be touched.
+    def _ws_alive(self, ws: Workspace) -> bool:
+        return ws in self._workspaces
+
     def _on_node_selected(self, ws: Workspace, node_id: str) -> None:
+        if not self._ws_alive(ws):
+            return
         entity = ws.repo.entities.get(node_id)
         if entity:
             self._inspector.show_entity(entity)
 
     def _on_node_double_clicked(self, ws: Workspace, node_id: str) -> None:
+        if not self._ws_alive(ws):
+            return
         entity = ws.repo.entities.get(node_id)
         if entity is None:
             return
@@ -350,7 +379,7 @@ class MainWindow(QMainWindow):
             self._inspector.show_entity(updated)
 
     def _on_background_tapped(self, ws: Workspace) -> None:
-        if ws is self._active_ws:
+        if self._ws_alive(ws) and ws is self._active_ws:
             self._inspector.clear()
 
     def _expand_in_active(self, node_id: str) -> None:
@@ -394,6 +423,8 @@ class MainWindow(QMainWindow):
             return
 
         def on_ids(ids: list) -> None:
+            if not self._ws_alive(ws):
+                return  # workspace closed while the JS callback was in flight
             if not ids:
                 self._status.showMessage("Nothing selected to copy", 4000)
                 return
@@ -420,19 +451,25 @@ class MainWindow(QMainWindow):
         except ValueError as exc:
             self._status.showMessage(f"Clipboard is not a chart payload: {exc}", 5000)
             return
-        ws.repo.entities.upsert_batch(entities)
-        ws.repo.links.upsert_batch(links)
+        # Never clobber: entities already in the target keep their stored
+        # state (pasting must not silently revert edits made since the copy).
+        existing = ws.repo.entities.all_ids()
+        new_entities = [e for e in entities if e.id not in existing]
+        skipped = len(entities) - len(new_entities)
+        ws.repo.entities.upsert_batch(new_entities)
+        ws.repo.links.upsert_batch(links)  # existing link ids are skipped by MERGE
         ws.graph_view.add_elements({
             "nodes": [e.to_cytoscape() for e in entities],
             "edges": [l.to_cytoscape() for l in links],
         })
         self._update_status()
-        self._status.showMessage(
-            f"Pasted {len(entities)} entities · {len(links)} links", 4000)
+        message = f"Pasted {len(new_entities)} entities · {len(links)} links"
+        if skipped:
+            message += f" ({skipped} already present, left unchanged)"
+        self._status.showMessage(message, 4000)
 
     # ── Theme ────────────────────────────────────────────────────────
     def _toggle_theme(self, light: bool) -> None:
-        from ..app import apply_theme
         apply_theme(QApplication.instance(), "light" if light else "dark")
         for ws in self._workspaces:
             ws.refresh_theme()
@@ -440,10 +477,7 @@ class MainWindow(QMainWindow):
 
     # ── Toggles routed to the active workspace ───────────────────────
     def _toggle_degree_sizing(self, enabled: bool) -> None:
-        ws = self._active_ws
-        if ws is not None:
-            ws.degree_sizing = enabled
-            ws.graph_view.set_degree_sizing(enabled)
+        self._with_active(lambda ws: ws.set_degree_sizing(enabled))
 
     def _toggle_grid_snap(self, enabled: bool) -> None:
         self._with_active(lambda ws: ws.set_grid_snap(enabled))

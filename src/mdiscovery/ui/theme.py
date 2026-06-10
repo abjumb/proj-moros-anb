@@ -322,6 +322,28 @@ QScrollArea > QWidget > QWidget {{
     background: transparent;
 }}
 
+/* ── Workspace panes ──────────────────────────────────────────────── */
+/* Active pane carries the accent underline; Workspace toggles the
+   wsActive dynamic property and repolishes. */
+#workspaceHeader {{
+    background-color: {t["bg_panel"]};
+    border-bottom: 2px solid {t["border"]};
+}}
+#workspaceHeader[wsActive="true"] {{
+    border-bottom: 2px solid {t["accent"]};
+}}
+#workspaceHeader QLabel {{
+    color: {t["text_muted"]};
+    font-weight: 600;
+}}
+#workspaceHeader[wsActive="true"] QLabel {{
+    color: {t["text"]};
+}}
+#workspaceClose {{
+    min-width: 22px;
+    padding: 0;
+}}
+
 /* ── Dock widgets (tool windows) ──────────────────────────────────── */
 QDockWidget {{
     color: {t["text"]};
