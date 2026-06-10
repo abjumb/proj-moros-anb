@@ -15,12 +15,16 @@ from ..graph.models import Entity, Link
 
 
 def load_node_link_json(path: str | Path) -> tuple[list[Entity], list[Link]]:
-    """Parse a node-link JSON document into entities and links.
+    """Parse a node-link JSON file into entities and links.
 
     Raises ``ValueError`` with positional context for malformed documents so
     the UI can surface a useful message instead of a raw traceback.
     """
-    raw = Path(path).read_text(encoding="utf-8")
+    return parse_node_link_text(Path(path).read_text(encoding="utf-8"))
+
+
+def parse_node_link_text(raw: str) -> tuple[list[Entity], list[Link]]:
+    """Parse node-link JSON text (file contents or clipboard payload)."""
     try:
         doc = json.loads(raw)
     except json.JSONDecodeError as exc:

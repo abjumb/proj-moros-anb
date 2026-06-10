@@ -119,3 +119,22 @@ def test_recent_tolerates_corrupt_store(tmp_path):
     assert rc.list() == []
     rc.add(tmp_path / "a")  # still usable
     assert [p.name for p in rc.list()] == ["a"]
+
+
+def test_copy_case_includes_media_dir(tmp_path):
+    """Dossier photos live in <case>.media/ and must travel with the copy."""
+    from mdiscovery.persistence import copy_case
+    src = tmp_path / "orig.kuzu"
+    src.write_bytes(b"db")
+    media = tmp_path / "orig.kuzu.media"
+    media.mkdir()
+    (media / "e1.jpg").write_bytes(b"img")
+
+    dst = tmp_path / "copy.kuzu"
+    copy_case(src, dst)
+    assert (tmp_path / "copy.kuzu.media" / "e1.jpg").read_bytes() == b"img"
+
+    # Overwrite refreshes the media dir too.
+    (media / "e2.jpg").write_bytes(b"img2")
+    copy_case(src, dst, overwrite=True)
+    assert (tmp_path / "copy.kuzu.media" / "e2.jpg").exists()

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="19" y="8" width="26" height="48" rx="4"/>
+  <path d="M25 16v8M30 16v8M34 16v8M39 16v8" stroke-width="2.5"/>
+  <path d="M25 30h14" stroke-width="2.5"/>
+  <text x="21" y="48" font-family="sans-serif" font-size="9" font-weight="700" fill="currentColor" stroke="none">IMEI</text>
+</svg>

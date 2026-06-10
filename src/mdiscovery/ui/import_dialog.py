@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
 
 from ..graph.models import SemanticType, LinkDirection
 from ..graph.repository import GraphRepository
+from . import theme
 from ..importer.ingestion import IngestionService, StagedDataset
 from ..importer.pipeline import (
     ColumnMapping, ImportMapping, ImportPipeline, CommitPreview,
@@ -39,12 +40,26 @@ ROLE_OPTIONS = [
 
 STYPE_OPTIONS = [(s.value, s.value) for s in SemanticType]
 
-# Mapped-column highlight tints (IntelliJ diff-style: readable under #DFE1E5 text).
-ROLE_HIGHLIGHTS = {
-    "entity_label": QColor("#294436"),  # green — label column
-    "link_source":  QColor("#2E4366"),  # blue — link source
-    "link_target":  QColor("#3D2E4F"),  # purple — link target
+# Mapped-column highlight tints per theme mode (IntelliJ diff-style: readable
+# under the mode's item-text color). Resolved at use time via role_highlights()
+# so the Import dialog follows View ▸ Light Mode.
+_ROLE_TINTS = {
+    "dark": {
+        "entity_label": "#294436",  # green — label column
+        "link_source":  "#2E4366",  # blue — link source
+        "link_target":  "#3D2E4F",  # purple — link target
+    },
+    "light": {
+        "entity_label": "#CCEBD2",
+        "link_source":  "#CFE0F7",
+        "link_target":  "#E6D9F2",
+    },
 }
+
+
+def role_highlights() -> dict[str, QColor]:
+    tints = _ROLE_TINTS[theme.current_mode()]
+    return {role: QColor(color) for role, color in tints.items()}
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -167,7 +182,7 @@ class SimpleModeTab(QWidget):
                 val = row.get(col)
                 item = QTableWidgetItem(str(val) if val is not None else "")
                 if c_idx == label_idx:
-                    item.setBackground(ROLE_HIGHLIGHTS["entity_label"])
+                    item.setBackground(role_highlights()["entity_label"])
                 self._preview_table.setItem(r_idx, c_idx, item)
 
         self._preview_table.resizeColumnsToContents()
@@ -327,14 +342,15 @@ class AdvancedModeTab(QWidget):
         self._preview_table.setRowCount(len(rows))
 
         role_map = {r.col_name: r.get_mapping().role for r in self._col_rows}
+        highlights = role_highlights()
 
         for r_idx, row in enumerate(rows):
             for c_idx, col in enumerate(cols):
                 val = row.get(col)
                 item = QTableWidgetItem(str(val) if val is not None else "")
                 role = role_map.get(col, "skip")
-                if role in ROLE_HIGHLIGHTS:
-                    item.setBackground(ROLE_HIGHLIGHTS[role])
+                if role in highlights:
+                    item.setBackground(highlights[role])
                 self._preview_table.setItem(r_idx, c_idx, item)
 
         self._preview_table.resizeColumnsToContents()

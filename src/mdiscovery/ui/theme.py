@@ -1,27 +1,80 @@
-"""Darcula-style theme — design tokens and the application stylesheet.
+"""JetBrains "New UI" theme — design tokens and the application stylesheet.
 
-Single source of truth for the JetBrains "New UI" dark palette. The QPalette in
-``app.py`` and the QSS built here both read from ``TOKENS``; the Cytoscape canvas
-(``assets/cytoscape/graph.html``) mirrors the same hex values.
+Single source of truth for both the Darcula dark palette and its light
+counterpart. The QPalette in ``app.py`` and the QSS built here read from the
+active palette; the Cytoscape canvas receives the same values at runtime via
+``canvas_theme()`` → ``GraphView.set_theme``.
 """
 
 from __future__ import annotations
 
-TOKENS: dict[str, str] = {
-    "bg_window":      "#1E1F22",  # main window / editor / canvas
-    "bg_panel":       "#2B2D30",  # tool windows, dialogs, inputs
-    "bg_hover":       "#3C3F44",
-    "bg_pressed":     "#43454A",
-    "border":         "#393B40",  # dividers, panel borders
-    "border_control": "#43454A",  # button / input outlines
-    "text":           "#DFE1E5",
-    "text_muted":     "#6F737A",
-    "accent":         "#3574F0",  # selection, focus ring
-    "accent_hover":   "#366ACE",
-    "row_alt":        "#26282E",  # alternating table rows
-    "scroll_handle":  "#43454A",
-    "scroll_hover":   "#54585E",
+PALETTES: dict[str, dict[str, str]] = {
+    "dark": {
+        "bg_window":      "#1E1F22",  # main window / editor / canvas
+        "bg_panel":       "#2B2D30",  # tool windows, dialogs, inputs
+        "bg_hover":       "#3C3F44",
+        "bg_pressed":     "#43454A",
+        "border":         "#393B40",  # dividers, panel borders
+        "border_control": "#43454A",  # button / input outlines
+        "text":           "#DFE1E5",
+        "text_muted":     "#6F737A",
+        "accent":         "#3574F0",  # selection, focus ring
+        "accent_hover":   "#366ACE",
+        "row_alt":        "#26282E",  # alternating table rows
+        "scroll_handle":  "#43454A",
+        "scroll_hover":   "#54585E",
+    },
+    "light": {
+        "bg_window":      "#FFFFFF",
+        "bg_panel":       "#F7F8FA",
+        "bg_hover":       "#EBECF0",
+        "bg_pressed":     "#DDDFE5",
+        "border":         "#D3D5DB",
+        "border_control": "#C4C7CF",
+        "text":           "#1E1F22",
+        "text_muted":     "#6C707E",
+        "accent":         "#3574F0",
+        "accent_hover":   "#3369D6",
+        "row_alt":        "#F4F5F7",
+        "scroll_handle":  "#C9CBD1",
+        "scroll_hover":   "#AEB3BB",
+    },
 }
+
+# Backwards-compatible alias: the dark palette was previously module-level TOKENS.
+TOKENS = PALETTES["dark"]
+
+_mode = "dark"
+
+
+def set_mode(mode: str) -> None:
+    global _mode
+    if mode not in PALETTES:
+        raise ValueError(f"Unknown theme mode: {mode!r}")
+    _mode = mode
+
+
+def current_mode() -> str:
+    return _mode
+
+
+def active_tokens() -> dict[str, str]:
+    """The palette for the current mode — read at render time, never cached."""
+    return PALETTES[_mode]
+
+
+def canvas_theme(mode: str | None = None) -> dict[str, str]:
+    """Token subset the Cytoscape canvas needs (pushed via setTheme JS call)."""
+    t = PALETTES[mode or _mode]
+    return {
+        "mode": mode or _mode,
+        "bg": t["bg_window"],
+        "panel": t["bg_panel"],
+        "border": t["border"],
+        "text": t["text"],
+        "textMuted": t["text_muted"],
+        "accent": t["accent"],
+    }
 
 # Sans-serif stack approximating the JetBrains New UI font; QFont.setFamilies
 # walks this list for the first installed family.
@@ -48,9 +101,9 @@ def _center_line(color: str, horizontal: bool) -> str:
     )
 
 
-def build_stylesheet() -> str:
+def build_stylesheet(mode: str | None = None) -> str:
     """Return the application-wide QSS for the parts QPalette can't reach."""
-    t = TOKENS
+    t = PALETTES[mode or _mode]
     return f"""
 /* ── Base ─────────────────────────────────────────────────────────── */
 QWidget {{
@@ -267,6 +320,28 @@ QScrollArea {{
 }}
 QScrollArea > QWidget > QWidget {{
     background: transparent;
+}}
+
+/* ── Workspace panes ──────────────────────────────────────────────── */
+/* Active pane carries the accent underline; Workspace toggles the
+   wsActive dynamic property and repolishes. */
+#workspaceHeader {{
+    background-color: {t["bg_panel"]};
+    border-bottom: 2px solid {t["border"]};
+}}
+#workspaceHeader[wsActive="true"] {{
+    border-bottom: 2px solid {t["accent"]};
+}}
+#workspaceHeader QLabel {{
+    color: {t["text_muted"]};
+    font-weight: 600;
+}}
+#workspaceHeader[wsActive="true"] QLabel {{
+    color: {t["text"]};
+}}
+#workspaceClose {{
+    min-width: 22px;
+    padding: 0;
 }}
 
 /* ── Dock widgets (tool windows) ──────────────────────────────────── */

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any
 import json
 import uuid
@@ -26,12 +27,43 @@ class LinkDirection(str, Enum):
     BIDIRECTIONAL = "bidirectional"
 
 
+# Canvas data fields with rendering semantics. User properties with these
+# names are kept in the model/exports but are NOT spread into Cytoscape data,
+# where they would be misread as image URLs / sizes.
+# Keep in sync with INTERNAL_KEYS in assets/cytoscape/graph.html.
+RESERVED_DATA_KEYS = frozenset(
+    {"id", "label", "type", "icon", "photo", "_size", "_fontSize"}
+)
+
+
+def merge_edited_properties(original: dict, edited: dict) -> dict:
+    """Merge a string-valued edit (UI table) over typed original properties.
+
+    Property editors round-trip values as text; writing that text back
+    wholesale would silently stringify ints/floats/lists the user never
+    touched. Keep the original (typed) value wherever its string form is
+    unchanged; only genuinely edited values become strings.
+    """
+    merged: dict = {}
+    for key, value in edited.items():
+        if key in original and str(original[key]) == value:
+            merged[key] = original[key]
+        else:
+            merged[key] = value
+    return merged
+
+
 @dataclass
 class Entity:
     label: str
     semantic_type: SemanticType = SemanticType.UNKNOWN
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     properties: dict[str, Any] = field(default_factory=dict)
+    # Icon name from the assets/icons library ("" = derive from semantic type).
+    icon: str = ""
+    # Per-entity display attributes managed by the dossier UI:
+    # "size" (node px), "font_size" (label px), "photo" (absolute image path).
+    style: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -39,32 +71,51 @@ class Entity:
             "label": self.label,
             "semantic_type": self.semantic_type.value,
             "properties": self.properties,
+            "icon": self.icon,
+            "style": self.style,
         }
 
     def properties_json(self) -> str:
         return json.dumps(self.properties)
+
+    def style_json(self) -> str:
+        return json.dumps(self.style)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Entity":
         props = data.get("properties", {})
         if isinstance(props, str):
             props = json.loads(props)
+        style = data.get("style", {})
+        if isinstance(style, str):
+            style = json.loads(style) if style else {}
         return cls(
             id=data["id"],
             label=data["label"],
             semantic_type=SemanticType(data.get("semantic_type", "Unknown")),
             properties=props,
+            icon=data.get("icon", "") or "",
+            style=style or {},
         )
 
     def to_cytoscape(self) -> dict:
-        return {
-            "data": {
-                "id": self.id,
-                "label": self.label,
-                "type": self.semantic_type.value,
-                **{k: str(v) for k, v in self.properties.items()},
-            }
+        data = {
+            "id": self.id,
+            "label": self.label,
+            "type": self.semantic_type.value,
+            **{k: str(v) for k, v in self.properties.items()
+               if k not in RESERVED_DATA_KEYS},
         }
+        if self.icon:
+            data["icon"] = self.icon
+        photo = self.style.get("photo")
+        if photo and Path(photo).is_absolute():
+            data["photo"] = Path(photo).as_uri()
+        if self.style.get("size"):
+            data["_size"] = self.style["size"]
+        if self.style.get("font_size"):
+            data["_fontSize"] = self.style["font_size"]
+        return {"data": data}
 
 
 @dataclass
