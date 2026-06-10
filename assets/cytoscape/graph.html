@@ -35,6 +35,18 @@
     max-width: 260px;
   }
   #tooltip .type { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
+  #msgOverlay {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 0 15%;
+    color: var(--text-muted);
+    font: 14px/1.6 'Inter', 'Segoe UI', system-ui, sans-serif;
+    pointer-events: none;
+  }
   #edgeEditor {
     position: fixed;
     display: none;
@@ -56,6 +68,7 @@
 <body>
 <div id="cy"></div>
 <div id="tooltip"></div>
+<div id="msgOverlay"></div>
 <input id="edgeEditor" autocomplete="off" spellcheck="false">
 <script>
 // ── Theme state (mutated by setTheme; style functions read it live) ────
@@ -265,6 +278,7 @@ function esc(s) {
 
 // ── Tooltip ────────────────────────────────────────────────────────────
 const tooltip = document.getElementById('tooltip');
+const msgOverlay = document.getElementById('msgOverlay');
 // Keep in sync with RESERVED_DATA_KEYS in src/mdiscovery/graph/models.py.
 const INTERNAL_KEYS = ['id', 'label', 'type', 'icon', 'photo', '_size', '_fontSize'];
 cy.on('mouseover', 'node', evt => {
@@ -379,12 +393,26 @@ cy.on('tap', evt => {
 
 // ── Public API called from Python ──────────────────────────────────────
 
+window.showMessage = function(text) {
+  // Centered overlay for "render skipped" / empty-state guidance.
+  msgOverlay.textContent = text;
+  msgOverlay.style.display = 'flex';
+};
+window.hideMessage = function() {
+  msgOverlay.style.display = 'none';
+};
+
 window.loadGraph = function(jsonStr) {
   const data = (typeof jsonStr === 'string') ? JSON.parse(jsonStr) : jsonStr;
-  cy.elements().remove();
+  window.hideMessage();
   const nodes = data.nodes || [];
-  cy.add(nodes);            // cy.add applies any element.position presets
-  cy.add(data.edges || []);
+  // Batch the bulk add: one style/layout flush instead of one per element —
+  // the difference between seconds and minutes on large graphs.
+  cy.batch(() => {
+    cy.elements().remove();
+    cy.add(nodes);          // cy.add applies any element.position presets
+    cy.add(data.edges || []);
+  });
   const positioned = nodes.filter(n => n.position).length;
   if (nodes.length === 0 || positioned === 0) {
     window.applyLayout('cose');
@@ -408,10 +436,16 @@ window.loadGraph = function(jsonStr) {
   cy.fit(undefined, 60);
 };
 
+// Force-directed (cose) is O(n^2) per tick and never finishes on tens of
+// thousands of nodes; past this size we substitute the O(n) grid layout so a
+// large render actually completes.
+const FORCE_LAYOUT_LIMIT = 2000;
+
 window.applyLayout = function(name) {
-  // Animation is pleasant on workbench-sized graphs and pure cost on large
-  // ones — skip it once the canvas holds thousands of elements.
-  const animate = cy.elements().length < 1500;
+  const count = cy.elements().length;
+  // Animation is pleasant on workbench-sized graphs and pure cost on large ones.
+  const animate = count < 1500;
+  if (name === 'cose' && count > FORCE_LAYOUT_LIMIT) name = 'grid';
   const layouts = {
     cose:        { name: 'cose',        animate, animationDuration: 400 },
     hierarchical:{ name: 'breadthfirst', animate, directed: true },

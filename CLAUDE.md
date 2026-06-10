@@ -78,6 +78,8 @@ coverage that doesn't exist.
   drag via the `nodesMoved` bridge; swept via `capture_positions` before
   package export). `to_cytoscape()` emits them as position presets, so
   arrangements survive reload, export, and copy/paste automatically.
+- Rendering scale: the canvas draws the whole graph at once, so `GraphView.load_from_repo` warns above `LARGE_GRAPH_WARN` (5k) entities and lets the user render-or-skip; `applyLayout` swaps cose→grid above `FORCE_LAYOUT_LIMIT` (2k) since force-directed is O(n²). A renderer crash (OOM/GPU) is caught via `renderProcessTerminated` and shown as a message, not a blank canvas.
+- WebEngine GPU: `app._configure_webengine()` defaults Linux to software rendering (QtWebEngine GPU/GBM crashes are common there and a 2D canvas barely benefits from GPU); macOS/Windows keep hardware accel. Override with `MDISCOVERY_SOFTWARE_RENDER=1` / `MDISCOVERY_GPU=1`. Must be set before QApplication.
 - ANX import/export targets the publicly known i2 chart-XML shape and is
   validated by round-trip only — verify against real Analyst's Notebook
   output (reference .anx files) before claiming interop fidelity.
