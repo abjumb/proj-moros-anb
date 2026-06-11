@@ -238,3 +238,14 @@ def test_summary_buckets_unknown_semantic_types_consistently(repo):
         "MATCH (e:Entity {id:'x'}) SET e.semantic_type = 'NotAType'")
     summary = graph_summary_from_repo(repo)
     assert summary.entities_by_type == {"Unknown": 1}
+
+
+def test_newline_after_dialect_sniff_window(repo):
+    """kuzu sniffs the CSV dialect from ~256 rows; a multiline cell after
+    that window must still import (explicit QUOTE disables the sniff)."""
+    ents = [Entity(f"plain {i}", SemanticType.PERSON, id=f"p{i}")
+            for i in range(300)]
+    ents.append(Entity("late\nnewline", SemanticType.PERSON, id="late"))
+    repo.bulk_upsert(ents, [])
+    assert repo.entities.count() == 301
+    assert repo.entities.get("late").label == "late\nnewline"
