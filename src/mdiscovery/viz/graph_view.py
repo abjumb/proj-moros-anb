@@ -19,10 +19,11 @@ from PyQt6.QtWidgets import QMessageBox, QWidget, QVBoxLayout
 
 from ..graph.repository import GraphRepository
 from ..icons import DEFAULT_TYPE_ICONS, colored_svg, load_icon_svgs
+from ..resources import CYTOSCAPE_DIR
 from ..ui import theme
 
-# graph_view.py lives at <root>/src/mdiscovery/viz/ — parents[3] is <root>.
-ASSETS_DIR = Path(__file__).resolve().parents[3] / "assets" / "cytoscape"
+# Resolved per deployment shape (dev checkout / PyInstaller) in resources.py.
+ASSETS_DIR = CYTOSCAPE_DIR
 
 # Above this many entities, drawing the whole graph at once can freeze the
 # WebEngine renderer (and on low-memory boxes get it OOM-killed). We warn and

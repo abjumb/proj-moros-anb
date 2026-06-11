@@ -17,7 +17,9 @@ import random
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 
-from ..graph.models import Entity, Link, LinkDirection
+from collections import namedtuple
+
+from ..graph.models import Entity, Link, LinkDirection, SemanticType
 
 
 @dataclass
@@ -378,34 +380,120 @@ def label_propagation_communities(
 
 
 # --- repository convenience wrappers ---------------------------------------
+#
+# Metrics never read properties, so the wrappers fetch lightweight tuples
+# (no per-row JSON parsing) and wrap them in attribute-compatible refs —
+# on large cases this is the difference between seconds and instant.
+
+EntityRef = namedtuple("EntityRef", "id label semantic_type")
+LinkRef = namedtuple("LinkRef", "id source_id target_id link_type direction")
+
+
+def analysis_inputs_from_repo(repo) -> tuple[list, list]:
+    """(entities, links) as light refs satisfying the metrics contract."""
+    stypes = {s.value: s for s in SemanticType}
+    dirs = {d.value: d for d in LinkDirection}
+    entities = [
+        EntityRef(eid, label, stypes.get(stype, SemanticType.UNKNOWN))
+        for eid, label, stype in repo.entity_refs()
+    ]
+    links = [
+        LinkRef(lid, src, tgt, ltype, dirs.get(direction, LinkDirection.DIRECTED))
+        for lid, src, tgt, ltype, direction in repo.link_refs()
+    ]
+    return entities, links
+
 
 def degree_centrality_from_repo(repo) -> list[DegreeStats]:
-    return degree_centrality(repo.entities.all(), repo.links.all())
+    return degree_centrality(*analysis_inputs_from_repo(repo))
 
 
 def connected_components_from_repo(repo) -> list[set[str]]:
-    return connected_components(repo.entities.all(), repo.links.all())
+    return connected_components(*analysis_inputs_from_repo(repo))
 
 
 def graph_summary_from_repo(repo, top_n: int = 10) -> GraphSummary:
-    return graph_summary(repo.entities.all(), repo.links.all(), top_n=top_n)
+    """Tuple-native summary — avoids one wrapper object per row on large
+    cases. Equivalence with graph_summary() is pinned by tests."""
+    e_refs = repo.entity_refs()        # (id, label, stype)
+    l_refs = repo.link_refs()          # (id, src, tgt, ltype, direction)
+
+    stypes = {st.value: st for st in SemanticType}
+    entities_by_type: dict[str, int] = defaultdict(int)
+    labels: dict[str, str] = {}
+    for eid, label, stype in e_refs:
+        # Bucket by the parsed enum value (unknown strings -> Unknown), the
+        # same coercion analysis_inputs_from_repo applies — raw-string keys
+        # would diverge from every Entity-object code path.
+        entities_by_type[stypes.get(stype, SemanticType.UNKNOWN).value] += 1
+        labels[eid] = label
+
+    links_by_type: dict[str, int] = defaultdict(int)
+    in_deg: dict[str, int] = defaultdict(int)
+    out_deg: dict[str, int] = defaultdict(int)
+    incident: dict[str, int] = defaultdict(int)
+    adj: dict[str, set[str]] = {eid: set() for eid in labels}
+    known = labels.keys()
+    symmetric = (LinkDirection.UNDIRECTED.value, LinkDirection.BIDIRECTIONAL.value)
+    for _lid, s_, t_, ltype, direction in l_refs:
+        links_by_type[ltype] += 1
+        s_in, t_in = s_ in known, t_ in known
+        if s_in:
+            out_deg[s_] += 1; incident[s_] += 1
+        if t_in:
+            in_deg[t_] += 1; incident[t_] += 1
+        if direction in symmetric:
+            if t_in: out_deg[t_] += 1
+            if s_in: in_deg[s_] += 1
+        if s_in and t_in and s_ != t_:
+            adj[s_].add(t_); adj[t_].add(s_)
+
+    seen: set[str] = set()
+    components = 0
+    largest = 0
+    for node in adj:
+        if node in seen:
+            continue
+        components += 1
+        size = 0
+        queue = deque([node]); seen.add(node)
+        while queue:
+            cur = queue.popleft(); size += 1
+            for nbr in adj[cur]:
+                if nbr not in seen:
+                    seen.add(nbr); queue.append(nbr)
+        largest = max(largest, size)
+
+    stats = [DegreeStats(eid, labels[eid], in_deg[eid], out_deg[eid],
+                         incident[eid]) for eid in labels]
+    stats.sort(key=lambda d: (d.total_degree, d.label), reverse=True)
+
+    return GraphSummary(
+        entity_count=len(labels),
+        link_count=len(l_refs),
+        component_count=components,
+        largest_component_size=largest,
+        density=_density(len(labels), len(l_refs)),
+        entities_by_type=dict(sorted(entities_by_type.items())),
+        links_by_type=dict(sorted(links_by_type.items())),
+        top_entities=stats[:top_n],
+    )
 
 
 def betweenness_centrality_from_repo(repo) -> dict[str, float]:
-    entities = repo.entities.all()
-    links = repo.links.all()
+    entities, links = analysis_inputs_from_repo(repo)
     return betweenness_centrality(
         entities, links, sample_size=recommended_sample_size(len(entities))
     )
 
 
 def closeness_centrality_from_repo(repo) -> dict[str, float]:
-    return closeness_centrality(repo.entities.all(), repo.links.all())
+    return closeness_centrality(*analysis_inputs_from_repo(repo))
 
 
 def eigenvector_centrality_from_repo(repo) -> dict[str, float]:
-    return eigenvector_centrality(repo.entities.all(), repo.links.all())
+    return eigenvector_centrality(*analysis_inputs_from_repo(repo))
 
 
 def label_propagation_communities_from_repo(repo) -> list[set[str]]:
-    return label_propagation_communities(repo.entities.all(), repo.links.all())
+    return label_propagation_communities(*analysis_inputs_from_repo(repo))

@@ -9,12 +9,9 @@ authoring dialogs use the same registry for pickers and previews.
 from __future__ import annotations
 
 from functools import lru_cache
-from pathlib import Path
 
 from .graph.models import SemanticType
-
-# icons.py lives at <root>/src/mdiscovery/ — parents[2] is <root>.
-ICONS_DIR = Path(__file__).resolve().parents[2] / "assets" / "icons"
+from .resources import ICONS_DIR
 
 # Display name -> file stem. Order is the picker order.
 ICONS: dict[str, str] = {

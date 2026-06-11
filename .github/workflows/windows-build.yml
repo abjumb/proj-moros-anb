@@ -1,0 +1,49 @@
+name: Windows build
+
+on:
+  push:
+    branches: [master, "claude/**"]
+    paths-ignore: ["docs/**", "*.md"]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install app + PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install . pyinstaller
+
+      - name: Build with PyInstaller
+        run: pyinstaller packaging/mdiscovery.spec --noconfirm
+
+      - name: Smoke-test the frozen exe
+        shell: pwsh
+        env:
+          # CI runners have no real GPU; force software rendering so the
+          # WebEngine canvas can come up.
+          QTWEBENGINE_CHROMIUM_FLAGS: --disable-gpu
+        run: |
+          # console=False app: launch detached and collect the exit code.
+          $p = Start-Process -FilePath "dist/mDiscovery/mDiscovery.exe" `
+                -ArgumentList "--smoke" -PassThru -Wait
+          Write-Host "smoke exit code: $($p.ExitCode)"
+          exit $p.ExitCode
+
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path dist/mDiscovery -DestinationPath mDiscovery-windows-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mDiscovery-windows-x64
+          path: mDiscovery-windows-x64.zip
+          if-no-files-found: error

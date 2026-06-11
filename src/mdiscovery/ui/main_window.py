@@ -475,8 +475,7 @@ class MainWindow(QMainWindow):
         existing = ws.repo.entities.all_ids()
         new_entities = [e for e in entities if e.id not in existing]
         skipped = len(entities) - len(new_entities)
-        ws.repo.entities.upsert_batch(new_entities)
-        ws.repo.links.upsert_batch(links)  # existing link ids are skipped by MERGE
+        ws.repo.bulk_upsert(new_entities, links)  # existing links skip, as before
         ws.graph_view.add_elements({
             "nodes": [e.to_cytoscape() for e in entities],
             "edges": [l.to_cytoscape() for l in links],
@@ -636,8 +635,7 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, "Import error", str(exc))
             return
-        ws.repo.entities.upsert_batch(entities)
-        ws.repo.links.upsert_batch(links)
+        ws.repo.bulk_upsert(entities, links)
         self._refresh_graph()
         self._status.showMessage(
             f"Imported {len(entities)} entities · {len(links)} links from JSON", 5000
@@ -657,8 +655,7 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, "Import error", str(exc))
             return
-        ws.repo.entities.upsert_batch(entities)
-        ws.repo.links.upsert_batch(links)
+        ws.repo.bulk_upsert(entities, links)
         self._refresh_graph()
         self._status.showMessage(
             f"Imported {len(entities)} entities · {len(links)} links from ANX", 5000
@@ -709,8 +706,7 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, "Package import failed", str(exc))
             return
-        ws.repo.entities.upsert_batch(entities)
-        ws.repo.links.upsert_batch(links)
+        ws.repo.bulk_upsert(entities, links)
         self._refresh_graph()
         self._status.showMessage(
             f"Imported package: {len(entities)} entities · {len(links)} links", 5000
