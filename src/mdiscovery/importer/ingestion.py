@@ -6,7 +6,6 @@ mixed types, and surfaces parse errors without crashing.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 import io
@@ -15,16 +14,56 @@ import chardet
 import pandas as pd
 
 
-@dataclass
+def _sanitize_records(records: list[dict]) -> list[dict]:
+    # Normalise missing values to None. `df.where(pd.notna(df), None)` is
+    # unreliable under pandas 3.x (NaN leaks back into object columns), so
+    # sanitise materialised rows directly.
+    return [
+        {k: (None if (v is None or (isinstance(v, float) and pd.isna(v))) else v)
+         for k, v in row.items()}
+        for row in records
+    ]
+
+
 class StagedDataset:
-    columns: list[str]
-    rows: list[dict[str, Any]]
-    column_samples: dict[str, list[Any]]
-    column_types: dict[str, str]  # "string" | "numeric" | "date" | "mixed"
-    parse_warnings: list[str] = field(default_factory=list)
+    """Parsed file staged for import.
+
+    Holds the pandas frame; ``rows`` (a list of sanitised dicts) is
+    materialised lazily because a 50 MB file is ~1M dict allocations the
+    vectorised import path never needs.
+    """
+
+    def __init__(self, columns: list[str],
+                 rows: Optional[list[dict[str, Any]]] = None,
+                 column_samples: Optional[dict[str, list[Any]]] = None,
+                 column_types: Optional[dict[str, str]] = None,
+                 parse_warnings: Optional[list[str]] = None,
+                 frame: Optional[pd.DataFrame] = None):
+        self.columns = columns
+        self._rows = rows
+        self.frame = frame
+        self.column_samples = column_samples or {}
+        self.column_types = column_types or {}  # "string"|"numeric"|"date"|"mixed"
+        self.parse_warnings = parse_warnings or []
+
+    @property
+    def rows(self) -> list[dict[str, Any]]:
+        if self._rows is None:
+            self._rows = (_sanitize_records(self.frame.to_dict(orient="records"))
+                          if self.frame is not None else [])
+        return self._rows
+
+    def row_count(self) -> int:
+        if self._rows is not None:
+            return len(self._rows)
+        return 0 if self.frame is None else len(self.frame)
 
     def head(self, n: int = 50) -> list[dict[str, Any]]:
-        return self.rows[:n]
+        if self._rows is not None:
+            return self._rows[:n]
+        if self.frame is None:
+            return []
+        return _sanitize_records(self.frame.head(n).to_dict(orient="records"))
 
 
 class IngestionService:
@@ -85,18 +124,9 @@ class IngestionService:
                 inference_sample = non_null.tolist()
             column_types[col] = self._infer_type(inference_sample)
 
-        # Normalise missing values to None. `df.where(pd.notna(df), None)` is
-        # unreliable under pandas 3.x (NaN leaks back into object columns), so
-        # sanitise the materialised rows directly.
-        raw_rows = df.to_dict(orient="records")
-        rows = [
-            {k: (None if (v is None or (isinstance(v, float) and pd.isna(v))) else v)
-             for k, v in row.items()}
-            for row in raw_rows
-        ]
         return StagedDataset(
             columns=list(df.columns),
-            rows=rows,
+            frame=df,
             column_samples=column_samples,
             column_types=column_types,
             parse_warnings=warnings,

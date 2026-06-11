@@ -116,7 +116,7 @@ def _semantic_for(header: str) -> SemanticType:
 
 def _string_values(dataset: StagedDataset, column: str) -> list[str]:
     out = []
-    for row in dataset.rows[:_SAMPLE_ROWS]:
+    for row in dataset.head(_SAMPLE_ROWS):
         value = row.get(column)
         if value is not None and str(value).strip():
             out.append(str(value).strip())
@@ -138,7 +138,7 @@ def _find_endpoint_pair(dataset: StagedDataset) -> tuple[str, str] | None:
     # Endpoints must look entity-like: low-cardinality categorical columns
     # (status flags, yes/no fields) overlap trivially but aren't entities,
     # and accepting them fabricates category→category links.
-    row_count = max(len(dataset.rows), 1)
+    row_count = max(dataset.row_count(), 1)
     min_distinct = max(3, min(int(row_count * 0.1), 20))
 
     string_cols = [c for c in dataset.columns
@@ -167,7 +167,7 @@ def _find_type_column(dataset: StagedDataset, taken: set[str]) -> str | None:
         if _matches(col, _TYPE_HINTS):
             return col
     candidates = []
-    row_count = max(len(dataset.rows), 1)
+    row_count = max(dataset.row_count(), 1)
     for col in remaining:
         if dataset.column_types.get(col) != "string":
             continue

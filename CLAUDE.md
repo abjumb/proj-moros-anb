@@ -83,6 +83,13 @@ coverage that doesn't exist.
   (dev checkout vs PyInstaller); never hardcode `__file__`-relative asset
   paths. The Windows build is `packaging/mdiscovery.spec` + the
   `windows-build.yml` workflow (onedir + `--smoke` self-test).
+- Import scale: the pipeline is vectorized end-to-end — lazy StagedDataset
+  rows (never materialize 1M dicts), unique-label hashing, a preview→commit
+  build cache, and `GraphRepository.bulk_upsert` (Kuzu `COPY` from temp CSV,
+  ~250× the per-row rel-MERGE; ESCAPE '"' dialect is load-bearing). A 50 MB
+  record file imports+analyzes in ~10 s (realistic widths) / ~27 s (860k
+  narrow rows). Analysis wrappers use `entity_refs`/`link_refs` (no JSON
+  parsing). Floors: sha256 stable-id contract, Kuzu COPY engine, Python BFS.
 - Rendering scale: the canvas draws the whole graph at once, so `GraphView.load_from_repo` warns above `LARGE_GRAPH_WARN` (5k) entities and lets the user render-or-skip; `applyLayout` swaps cose→grid above `FORCE_LAYOUT_LIMIT` (2k) since force-directed is O(n²). A renderer crash (OOM/GPU) is caught via `renderProcessTerminated` and shown as a message, not a blank canvas.
 - WebEngine GPU: `app._configure_webengine()` defaults Linux to software rendering (QtWebEngine GPU/GBM crashes are common there and a 2D canvas barely benefits from GPU); macOS/Windows keep hardware accel. Override with `MDISCOVERY_SOFTWARE_RENDER=1` / `MDISCOVERY_GPU=1`. Must be set before QApplication.
 - ANX import/export targets the publicly known i2 chart-XML shape and is
