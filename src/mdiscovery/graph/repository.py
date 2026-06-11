@@ -48,20 +48,25 @@ def _collect_links(result) -> list[Link]:
 def _path_literal(path: Path) -> str:
     """COPY path as a Cypher string literal — backslash-escape quotes
     (Windows usernames like O'Brien put apostrophes in temp paths)."""
-    return path.as_posix().replace("'", "\\'")
+    # Backslashes first (escape introducer), then quotes.
+    return path.as_posix().replace("\\", "\\\\").replace("'", "\\'")
 
 
 def _copy_into(conn, table: str, path: Path) -> None:
     """COPY with newline resilience: the parallel CSV reader rejects quoted
     newlines (legal in XLSX cells); retry single-threaded only when hit."""
     literal = _path_literal(path)
+    # Explicit QUOTE: kuzu sniffs the dialect from the first ~256 rows, and a
+    # quoted/multiline cell appearing later mis-parses as a column-count
+    # error. Declaring the dialect disables the sniff entirely.
+    options = "ESCAPE '\"', QUOTE '\"'"
     try:
-        conn.execute(f"COPY {table} FROM '{literal}' (ESCAPE '\"')")
+        conn.execute(f"COPY {table} FROM '{literal}' ({options})")
     except RuntimeError as exc:
         if "Quoted newlines" not in str(exc):
             raise
         conn.execute(
-            f"COPY {table} FROM '{literal}' (ESCAPE '\"', PARALLEL=FALSE)")
+            f"COPY {table} FROM '{literal}' ({options}, PARALLEL=FALSE)")
 
 
 class EntityRepository:
