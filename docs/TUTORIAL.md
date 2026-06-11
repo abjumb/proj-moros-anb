@@ -14,10 +14,13 @@ pip install -e ".[dev]"
 mdiscovery
 ```
 
-> Internet is needed on first launch (the canvas loads Cytoscape from a CDN).
-> Cases are stored in `~/.mdiscovery/` by default. On Linux the app uses
-> software rendering automatically for stability; force GPU with
-> `MDISCOVERY_GPU=1` if you want it.
+> Fully offline — all canvas assets ship with the app. Cases are stored in
+> `~/.mdiscovery/` by default. On Linux the app uses software rendering
+> automatically for stability; force GPU with `MDISCOVERY_GPU=1`.
+
+**Windows (no Python required):** download `mDiscovery-windows-x64.zip` from
+the *Windows build* workflow artifacts (GitHub ▸ Actions), unzip anywhere,
+and run `mDiscovery\mDiscovery.exe`.
 
 You'll land in an empty case. The window has four areas: the **toolbar**
 (actions + search), the **workspace pane** (your chart canvas, titled with the
