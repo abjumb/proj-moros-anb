@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QLabel,
@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 from ..graph.models import SemanticType, LinkDirection
 from ..graph.repository import GraphRepository
 from . import theme
+from ..importer.automap import AutoMapResult, detect_mapping
 from ..importer.ingestion import IngestionService, StagedDataset
 from ..importer.pipeline import (
     ColumnMapping, ImportMapping, ImportPipeline, CommitPreview,
@@ -72,6 +73,8 @@ class SimpleModeTab(QWidget):
     Left side: file picker + column selector + semantic type.
     Right side: 50-row live preview table with label column highlighted.
     """
+
+    datasetLoaded = pyqtSignal(str)  # path — dialog runs auto-mapping
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -139,6 +142,9 @@ class SimpleModeTab(QWidget):
         )
         if not path:
             return
+        self.load_file(path)
+
+    def load_file(self, path: str) -> None:
         self._path_edit.setText(path)
         try:
             svc = IngestionService()
@@ -146,6 +152,20 @@ class SimpleModeTab(QWidget):
             self._populate_columns()
         except Exception as exc:
             QMessageBox.critical(self, "Import error", str(exc))
+            return
+        self.datasetLoaded.emit(path)
+
+    def apply_auto(self, result: AutoMapResult) -> None:
+        """Apply detected label column/type to the pickers."""
+        if not result.label_column:
+            return
+        index = self._col_combo.findText(result.label_column)
+        if index >= 0:
+            self._col_combo.setCurrentIndex(index)  # triggers preview refresh
+        label_map = result.mapping.label_columns()
+        if label_map and label_map[0].semantic_type is not SemanticType.UNKNOWN:
+            self._stype_combo.setCurrentIndex(
+                self._stype_combo.findData(label_map[0].semantic_type.value))
 
     def _populate_columns(self) -> None:
         if self._dataset is None:
@@ -247,6 +267,8 @@ class AdvancedModeTab(QWidget):
     Semantic type assignment per column. Preview reflects choices.
     """
 
+    datasetLoaded = pyqtSignal(str)  # path — dialog runs auto-mapping
+
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._dataset: Optional[StagedDataset] = None
@@ -306,6 +328,9 @@ class AdvancedModeTab(QWidget):
         )
         if not path:
             return
+        self.load_file(path)
+
+    def load_file(self, path: str) -> None:
         self._path_edit.setText(path)
         try:
             svc = IngestionService()
@@ -314,6 +339,22 @@ class AdvancedModeTab(QWidget):
             self._refresh_preview()
         except Exception as exc:
             QMessageBox.critical(self, "Import error", str(exc))
+            return
+        self.datasetLoaded.emit(path)
+
+    def apply_auto(self, result: AutoMapResult) -> None:
+        """Set each column row's role/type combos from the detected mapping."""
+        by_column = {m.column: m for m in result.mapping.column_mappings}
+        for row in self._col_rows:
+            detected = by_column.get(row.col_name)
+            role = detected.role if detected else "skip"
+            index = row._role_combo.findData(role)
+            if index >= 0:
+                row._role_combo.setCurrentIndex(index)
+            if detected and detected.semantic_type is not SemanticType.UNKNOWN:
+                row._stype_combo.setCurrentIndex(
+                    row._stype_combo.findData(detected.semantic_type.value))
+        self._refresh_preview()
 
     def _build_column_rows(self) -> None:
         # Clear
@@ -394,6 +435,8 @@ class ImportDialog(QDialog):
         self._tabs.addTab(self._simple, "Simple")
         self._tabs.addTab(self._advanced, "Advanced")
         layout.addWidget(self._tabs)
+        self._simple.datasetLoaded.connect(self._on_dataset_loaded)
+        self._advanced.datasetLoaded.connect(self._on_dataset_loaded)
 
         self._status = QLabel("")
         layout.addWidget(self._status)
@@ -418,6 +461,38 @@ class ImportDialog(QDialog):
 
     def _active_tab(self) -> SimpleModeTab | AdvancedModeTab:
         return self._simple if self._tabs.currentIndex() == 0 else self._advanced
+
+    def _on_dataset_loaded(self, path: str) -> None:
+        """Auto-map columns the moment a file loads — no user configuration.
+
+        Relationship data routes to the Advanced tab with roles pre-set;
+        entity lists pre-fill the Simple tab. Either way the preview runs
+        immediately, so the user can just press Import (combos stay editable
+        for overrides).
+        """
+        sender = self.sender()
+        dataset = sender.dataset if sender is not None else None
+        if dataset is None:
+            return
+        result = detect_mapping(dataset)
+
+        if result.link_mode:
+            if sender is not self._advanced:
+                # Mirror the already-loaded dataset into the Advanced tab.
+                self._advanced._path_edit.setText(path)
+                self._advanced._dataset = dataset
+                self._advanced._build_column_rows()
+            self._advanced.apply_auto(result)
+            self._tabs.setCurrentWidget(self._advanced)
+        else:
+            target = self._advanced if sender is self._advanced else self._simple
+            target.apply_auto(result)
+
+        self._do_preview()
+        detail = "; ".join(result.notes)
+        self._status.setText(
+            f"Auto-mapped ({detail}) — adjust roles if needed, then Import.  "
+            + self._status.text())
 
     def _do_preview(self) -> None:
         tab = self._active_tab()

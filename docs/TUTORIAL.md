@@ -52,15 +52,17 @@ restored next time the case opens.
 
 ## 2. Import data (CSV / XLSX)
 
-Click **Import…** on the toolbar.
+Click **Import…** on the toolbar and pick a file — **mDiscovery maps the
+columns automatically**. It detects relationship data (source/target/type
+columns, by header names or by the same entities appearing in two columns),
+assigns every role, switches to the right tab, and runs the preview — the
+status line shows what it decided (e.g. *"Auto-mapped: source → link source,
+relationship → link type…"*). Just press **Import**.
 
-- **Simple tab** — pick a file, choose which column is the entity label:
-  every row becomes a standalone entity. Good for quick lists.
-- **Advanced tab** — for *relationship* data. Map each column to a role:
-  `source` → **Link — source**, `target` → **Link — target**,
-  `relationship` → **Link — type**, extra columns → entity attributes.
-  The preview colors each mapped column; **Preview** is an optional dry-run,
-  and **Import** commits.
+The role pickers stay editable if you want to override a decision:
+- **Simple tab** — one label column → standalone entities (quick lists).
+- **Advanced tab** — full per-column control: link source/target/type,
+  entity attributes, semantic types. The preview colors each mapped column.
 
 ![Import dialog, Advanced tab](tutorial/04-import-dialog.png)
 
