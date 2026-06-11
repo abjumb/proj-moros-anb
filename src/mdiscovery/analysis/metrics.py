@@ -418,10 +418,14 @@ def graph_summary_from_repo(repo, top_n: int = 10) -> GraphSummary:
     e_refs = repo.entity_refs()        # (id, label, stype)
     l_refs = repo.link_refs()          # (id, src, tgt, ltype, direction)
 
+    stypes = {st.value: st for st in SemanticType}
     entities_by_type: dict[str, int] = defaultdict(int)
     labels: dict[str, str] = {}
     for eid, label, stype in e_refs:
-        entities_by_type[stype] += 1
+        # Bucket by the parsed enum value (unknown strings -> Unknown), the
+        # same coercion analysis_inputs_from_repo applies — raw-string keys
+        # would diverge from every Entity-object code path.
+        entities_by_type[stypes.get(stype, SemanticType.UNKNOWN).value] += 1
         labels[eid] = label
 
     links_by_type: dict[str, int] = defaultdict(int)

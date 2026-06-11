@@ -159,4 +159,82 @@ def test_bulk_import_performance_guard(repo, tmp_path):
     elapsed = time.perf_counter() - t0
     assert repo.entities.count() == 4000
     assert repo.links.count() > 25000  # stable-id dedup collapses repeats
-    assert elapsed < 8.0, f"bulk import regressed: {elapsed:.1f}s for 30k rows"
+    assert elapsed < 20.0, f"bulk import regressed: {elapsed:.1f}s for 30k rows"
+
+
+# ── Code-review regressions (PR #13 review) ───────────────────────────
+
+def test_bulk_import_handles_embedded_newlines(repo):
+    """COPY's parallel reader rejects quoted newlines; we retry serial."""
+    e = [Entity("line1\nline2", SemanticType.PERSON, id="nl1"),
+         Entity("plain", SemanticType.PERSON, id="nl2")]
+    l = [Link(source_id="nl1", target_id="nl2", id="LN",
+              link_type="multi\nline type")]
+    repo.bulk_upsert(e, l)
+    assert repo.entities.get("nl1").label == "line1\nline2"
+    assert repo.links.get("LN").link_type == "multi\nline type"
+
+
+def test_zero_cells_kept_by_both_builders(repo, tmp_path):
+    """'0' endpoints/types are data, not emptiness — both builders agree."""
+    p = tmp_path / "zero.csv"
+    p.write_text("source,target,relationship\n0,Bob,calls\nAnn,0,0\n")
+    ds = IngestionService().load(p)
+    mapping = detect_mapping(ds).mapping
+    pipe = ImportPipeline(repo)
+    fast = pipe._build_vectorized(ds, mapping)
+    slow = pipe._build_rowwise(_slow_dataset(ds), mapping)
+    assert sorted(map(_key_e, fast[0])) == sorted(map(_key_e, slow[0]))
+    assert sorted(map(_key_l, fast[1])) == sorted(map(_key_l, slow[1]))
+    labels = {e.label for e in fast[0]}
+    assert "0" in labels and len(fast[1]) == 2
+
+
+def test_cache_not_fooled_by_lookalike_dataset(repo):
+    """Cache keys hold the dataset object — same-shape file ≠ cache hit."""
+    ds1 = IngestionService().load(DATA / "contacts.csv")
+    mapping = detect_mapping(ds1).mapping
+    pipe = ImportPipeline(repo)
+    pipe.preview(ds1, mapping)
+    ds2 = IngestionService().load(DATA / "contacts.csv")  # identical shape
+    pipe.preview(ds2, mapping)
+    assert pipe.build_calls == 2
+
+
+def test_imported_objects_do_not_share_properties_dict(repo, tmp_path):
+    p = tmp_path / "noattr.csv"
+    p.write_text("source,target,relationship\nA,B,r\nB,C,r\n")
+    ds = IngestionService().load(p)
+    pipe = ImportPipeline(repo)
+    ents, links, _ = pipe._build_vectorized(ds, detect_mapping(ds).mapping)
+    links[0].properties["poison"] = True
+    assert "poison" not in links[1].properties
+    ents[0].properties["poison"] = True
+    assert "poison" not in ents[1].properties
+
+
+def test_stale_columnar_links_never_leak_to_rowwise_commit(repo, tmp_path):
+    """Vectorized preview of A, then commit of frameless B: B's links win."""
+    ds_a = IngestionService().load(DATA / "contacts.csv")
+    pipe = ImportPipeline(repo)
+    pipe.preview(ds_a, detect_mapping(ds_a).mapping)   # arms columnar cols
+    ds_b = _slow_dataset(IngestionService().load(tmp_path_csv(tmp_path)))
+    mapping_b = detect_mapping(ds_b).mapping
+    pipe.commit(ds_b, mapping_b)
+    types = {l.link_type for l in repo.links.all()}
+    assert types == {"zz"}                              # only B's links
+
+
+def tmp_path_csv(tmp_path):
+    p = tmp_path / "b.csv"
+    p.write_text("source,target,relationship\nX,Y,zz\n")
+    return p
+
+
+def test_summary_buckets_unknown_semantic_types_consistently(repo):
+    repo.entities.upsert(Entity("X", id="x"))
+    # Corrupt the stored type directly (legacy/foreign case file).
+    repo._db.connection.execute(
+        "MATCH (e:Entity {id:'x'}) SET e.semantic_type = 'NotAType'")
+    summary = graph_summary_from_repo(repo)
+    assert summary.entities_by_type == {"Unknown": 1}

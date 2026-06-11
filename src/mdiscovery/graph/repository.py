@@ -45,6 +45,25 @@ def _collect_links(result) -> list[Link]:
     return out
 
 
+def _path_literal(path: Path) -> str:
+    """COPY path as a Cypher string literal — backslash-escape quotes
+    (Windows usernames like O'Brien put apostrophes in temp paths)."""
+    return path.as_posix().replace("'", "\\'")
+
+
+def _copy_into(conn, table: str, path: Path) -> None:
+    """COPY with newline resilience: the parallel CSV reader rejects quoted
+    newlines (legal in XLSX cells); retry single-threaded only when hit."""
+    literal = _path_literal(path)
+    try:
+        conn.execute(f"COPY {table} FROM '{literal}' (ESCAPE '\"')")
+    except RuntimeError as exc:
+        if "Quoted newlines" not in str(exc):
+            raise
+        conn.execute(
+            f"COPY {table} FROM '{literal}' (ESCAPE '\"', PARALLEL=FALSE)")
+
+
 class EntityRepository:
     def __init__(self, conn: kuzu.Connection):
         self._c = conn
@@ -347,8 +366,7 @@ class GraphRepository:
                             e.id, e.label, e.semantic_type.value,
                             e.properties_json(), e.icon, e.style_json(),
                         ])
-                conn.execute(
-                    f"COPY Entity FROM '{path.as_posix()}' (ESCAPE '\"')")
+                _copy_into(conn, "Entity", path)
         if upd_e:
             self.entities.upsert_batch(upd_e)
 
@@ -379,8 +397,7 @@ class GraphRepository:
                                          link_direction, 1.0, 1.0, props[i]])
                         written += 1
                 if written:
-                    conn.execute(
-                        f"COPY Link FROM '{path.as_posix()}' (ESCAPE '\"')")
+                    _copy_into(conn, "Link", path)
             return {
                 "entities_new": len(new_e), "entities_updated": len(upd_e),
                 "links_new": written, "links_skipped": total - written,
@@ -407,8 +424,7 @@ class GraphRepository:
                             l.direction.value, l.strength, l.confidence,
                             l.properties_json(),
                         ])
-                conn.execute(
-                    f"COPY Link FROM '{path.as_posix()}' (ESCAPE '\"')")
+                _copy_into(conn, "Link", path)
 
         return {
             "entities_new": len(new_e), "entities_updated": len(upd_e),

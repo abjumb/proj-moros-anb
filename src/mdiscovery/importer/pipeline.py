@@ -16,6 +16,13 @@ from ..graph.models import Entity, Link, SemanticType, LinkDirection
 from ..graph.repository import GraphRepository
 
 
+def _cell(row: dict, column: str) -> str:
+    """Row cell as stripped text; only None/NaN are empty — '0' stays '0'
+    (matching the vectorized builder; `or ""` dropped falsy values)."""
+    value = row.get(column)
+    return "" if value is None else str(value).strip()
+
+
 @dataclass
 class ColumnMapping:
     """How a single column maps to the graph."""
@@ -131,11 +138,15 @@ class ImportPipeline:
         )
 
     def _build_cached(self, dataset, mapping):
-        key = (id(dataset), self._mapping_fingerprint(mapping))
-        if key == self._cache_key:
+        # Key holds the dataset OBJECT (identity compare): keying on id()
+        # alone risks a recycled address serving a previous file's build.
+        fingerprint = self._mapping_fingerprint(mapping)
+        if (self._cache_key is not None
+                and self._cache_key[0] is dataset
+                and self._cache_key[1] == fingerprint):
             return self._cache_value
         value = self._build_graph_objects(dataset, mapping)
-        self._cache_key, self._cache_value = key, value
+        self._cache_key, self._cache_value = (dataset, fingerprint), value
         return value
 
     def _build_graph_objects(
@@ -151,7 +162,16 @@ class ImportPipeline:
         pinned by equivalence tests.
         """
         self.build_calls += 1
+        # Reset the columnar side channel for BOTH paths — a stale copy from
+        # an earlier vectorized build must never leak into a later commit.
+        self._bulk_link_cols = None
+        self._bulk_direction = mapping.default_link_direction
         if getattr(dataset, "frame", None) is not None:
+            # Multi-column mappings merge row-major in the row-wise builder;
+            # keep that order-sensitive shape on the proven path.
+            if (len(mapping.source_columns()) > 1
+                    or len(mapping.label_columns()) > 1):
+                return self._build_rowwise(dataset, mapping)
             return self._build_vectorized(dataset, mapping)
         return self._build_rowwise(dataset, mapping)
 
@@ -164,8 +184,6 @@ class ImportPipeline:
         links: list[Link] = []
         bulk_links_cols: dict[str, list] = {k: [] for k in
                                             ("src", "tgt", "id", "lt", "props")}
-        self._bulk_link_cols = None
-        self._bulk_direction = mapping.default_link_direction
 
         label_cols = mapping.label_columns()
         src_cols = mapping.source_columns()
@@ -183,7 +201,9 @@ class ImportPipeline:
             cols = [(m.column, m.attr_name or m.column) for m in attr_maps
                     if m.column not in exclude and m.column in df.columns]
             if not cols:
-                return [{}] * int(mask.sum())
+                # Distinct dicts — a shared instance would alias every
+                # entity/link's .properties to one mutable object.
+                return [{} for _ in range(int(mask.sum()))]
             arrays = [(name, df.loc[mask, col].tolist()) for col, name in cols]
             count = int(mask.sum())
             out = []
@@ -284,8 +304,8 @@ class ImportPipeline:
             if has_link_mapping:
                 # Entity–entity link mode: one entity per source col, one per target col
                 for src_col, tgt_col in zip(src_cols, tgt_cols):
-                    src_label = str(row.get(src_col.column) or "").strip()
-                    tgt_label = str(row.get(tgt_col.column) or "").strip()
+                    src_label = _cell(row, src_col.column)
+                    tgt_label = _cell(row, tgt_col.column)
                     if not src_label or not tgt_label:
                         continue
 
@@ -309,7 +329,7 @@ class ImportPipeline:
                     extra_props = self._collect_attrs(row, mapping, [src_col.column, tgt_col.column])
                     link_type = mapping.default_link_type
                     for m in link_type_cols:
-                        lt = str(row.get(m.column) or "").strip()
+                        lt = _cell(row, m.column)
                         if lt:
                             link_type = lt
 
@@ -324,7 +344,7 @@ class ImportPipeline:
             else:
                 # Simple mode: one entity per label column
                 for lc in label_cols:
-                    label = str(row.get(lc.column) or "").strip()
+                    label = _cell(row, lc.column)
                     if not label:
                         continue
                     eid = self._stable_id(label, lc.semantic_type)
@@ -357,22 +377,18 @@ class ImportPipeline:
         key = f"{source_id}->{target_id}::{link_type}::{props}"
         return hashlib.sha256(key.encode()).hexdigest()[:16], props
 
-    @staticmethod
+    @classmethod
     def _stable_link_id(
-        source_id: str, target_id: str, link_type: str, properties: dict[str, Any]
+        cls, source_id: str, target_id: str, link_type: str,
+        properties: dict[str, Any]
     ) -> str:
         """Deterministic link ID so re-imports merge instead of duplicating.
 
-        Random UUIDs previously defeated the MERGE semantics promised in the
-        module docstring: every re-import minted fresh ids and silently
-        doubled the link set. Properties are folded into the key so that
-        genuinely distinct relationships between the same pair — e.g. two calls
-        of different weight, which the i2 model represents as parallel links —
-        keep separate ids, while re-importing identical rows still collapses.
+        Delegates to _stable_link_id_and_props — one definition of the key
+        format, or the two builders mint different ids for identical rows.
         """
-        props = json.dumps(properties, sort_keys=True, default=str)
-        key = f"{source_id}->{target_id}::{link_type}::{props}"
-        return hashlib.sha256(key.encode()).hexdigest()[:16]
+        return cls._stable_link_id_and_props(
+            source_id, target_id, link_type, properties)[0]
 
     @staticmethod
     def _collect_attrs(

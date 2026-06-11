@@ -31,6 +31,9 @@ bench = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/mdiscovery"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"assets" = "mdiscovery/_assets"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
