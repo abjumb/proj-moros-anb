@@ -86,3 +86,36 @@ def test_notes_are_human_readable():
     result = detect_mapping(ds)
     joined = "; ".join(result.notes)
     assert "source" in joined and "link source" in joined
+
+
+# ── Review regressions (charliecreates on PR #12) ─────────────────────
+
+def test_total_does_not_match_to_hint(tmp_path):
+    """'total' must not prefix-match the 'to' hint and flip into link mode."""
+    ds = _load_csv(tmp_path,
+        "from_name,total,amount\nAlice,3,50\nBob,2,75\nCara,5,20\n")
+    result = detect_mapping(ds)
+    assert not result.link_mode
+    roles = _roles(result)
+    assert roles["total"] == "entity_attr"
+
+
+def test_separator_prefixed_endpoint_headers_still_match(tmp_path):
+    ds = _load_csv(tmp_path,
+        "from_account,to_account,amount\nAC1,AC2,50\nAC2,AC3,75\n")
+    result = detect_mapping(ds)
+    assert result.link_mode
+    roles = _roles(result)
+    assert roles["from_account"] == "link_source"
+    assert roles["to_account"] == "link_target"
+
+
+def test_low_cardinality_categories_not_endpoints(tmp_path):
+    """status_before/status_after overlap fully but are categories, not entities."""
+    rows = "\n".join(
+        f"C-{i},{'open' if i % 2 else 'closed'},{'closed' if i % 2 else 'open'}"
+        for i in range(12))
+    ds = _load_csv(tmp_path, "case_id,status_before,status_after\n" + rows + "\n")
+    result = detect_mapping(ds)
+    assert not result.link_mode
+    assert result.label_column == "case_id"

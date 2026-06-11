@@ -91,6 +91,21 @@ def _norm(header: str) -> str:
     return re.sub(r"[^a-z0-9]", "", header.lower())
 
 
+def _matches(header: str, hints: set[str]) -> bool:
+    """Whole-token hint matching.
+
+    Raw prefix matching is too broad for short hints — ``total`` must not
+    match ``to`` (that flipped ordinary tables into link mode). A header
+    matches when its fully normalized name is a hint, or its first token
+    (split on separators) is — so ``from_name``/``to account`` match while
+    ``total``/``fromage`` don't.
+    """
+    if _norm(header) in hints:
+        return True
+    tokens = [t for t in re.split(r"[^a-z0-9]+", header.lower()) if t]
+    return bool(tokens) and tokens[0] in hints
+
+
 def _semantic_for(header: str) -> SemanticType:
     norm = _norm(header)
     for key, stype in _SEMANTIC_HINTS.items():
@@ -110,11 +125,9 @@ def _string_values(dataset: StagedDataset, column: str) -> list[str]:
 
 def _find_endpoint_pair(dataset: StagedDataset) -> tuple[str, str] | None:
     """Locate the (source, target) column pair, by headers then by content."""
-    norms = {col: _norm(col) for col in dataset.columns}
 
     def match(hints: set[str]) -> list[str]:
-        return [c for c, n in norms.items()
-                if n in hints or any(n.startswith(h) for h in hints)]
+        return [c for c in dataset.columns if _matches(c, hints)]
 
     sources, targets = match(_SOURCE_HINTS), match(_TARGET_HINTS)
     if sources and targets and sources[0] != targets[0]:
@@ -122,16 +135,22 @@ def _find_endpoint_pair(dataset: StagedDataset) -> tuple[str, str] | None:
 
     # Content fallback: the pair of string columns with the highest mutual
     # value overlap — same entities appearing on both ends of an edge list.
+    # Endpoints must look entity-like: low-cardinality categorical columns
+    # (status flags, yes/no fields) overlap trivially but aren't entities,
+    # and accepting them fabricates category→category links.
+    row_count = max(len(dataset.rows), 1)
+    min_distinct = max(3, min(int(row_count * 0.1), 20))
+
     string_cols = [c for c in dataset.columns
                    if dataset.column_types.get(c) in ("string", "mixed", "date")]
     best, best_score = None, 0.0
     for i, a in enumerate(string_cols):
         set_a = set(_string_values(dataset, a))
-        if len(set_a) < 2:
+        if len(set_a) < min_distinct:
             continue
         for b in string_cols[i + 1:]:
             set_b = set(_string_values(dataset, b))
-            if len(set_b) < 2:
+            if len(set_b) < min_distinct:
                 continue
             overlap = len(set_a & set_b) / min(len(set_a), len(set_b))
             if overlap > best_score:
@@ -143,13 +162,13 @@ def _find_endpoint_pair(dataset: StagedDataset) -> tuple[str, str] | None:
 
 def _find_type_column(dataset: StagedDataset, taken: set[str]) -> str | None:
     """The relationship-label column: header hint, else low-cardinality text."""
-    norms = {c: _norm(c) for c in dataset.columns if c not in taken}
-    for col, norm in norms.items():
-        if norm in _TYPE_HINTS or any(norm.startswith(h) for h in _TYPE_HINTS):
+    remaining = [c for c in dataset.columns if c not in taken]
+    for col in remaining:
+        if _matches(col, _TYPE_HINTS):
             return col
     candidates = []
     row_count = max(len(dataset.rows), 1)
-    for col in norms:
+    for col in remaining:
         if dataset.column_types.get(col) != "string":
             continue
         values = _string_values(dataset, col)
@@ -163,9 +182,8 @@ def _find_type_column(dataset: StagedDataset, taken: set[str]) -> str | None:
 
 
 def _find_label_column(dataset: StagedDataset) -> str | None:
-    norms = {c: _norm(c) for c in dataset.columns}
-    for col, norm in norms.items():
-        if norm in _LABEL_HINTS or any(norm.startswith(h) for h in _LABEL_HINTS):
+    for col in dataset.columns:
+        if _matches(col, _LABEL_HINTS):
             return col
     # Most-unique string column wins; entity labels are near-unique.
     best, best_ratio = None, 0.0
